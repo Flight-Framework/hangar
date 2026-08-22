@@ -1,0 +1,92 @@
+// swift-tools-version: 6.2
+// Hangar — an Ecto-inspired query layer for Postgres, built directly on
+// PostgresNIO. See hangar-design.md (repo root) and README.md.
+import PackageDescription
+import CompilerPluginSupport
+
+let package = Package(
+    name: "hangar",
+    platforms: [
+        // Matches the Flight family floor (Mutex/Synchronization on Darwin).
+        // Linux with a Swift 6.2 toolchain is unaffected by this stanza.
+        .macOS(.v15)
+    ],
+    products: [
+        .library(name: "Hangar", targets: ["Hangar"])
+    ],
+    dependencies: [
+        // The design's dependency list (header): PostgresNIO, swift-log,
+        // swift-metrics, swift-syntax. Nothing from Flight.
+        .package(url: "https://github.com/vapor/postgres-nio.git", from: "1.21.0"),
+        .package(url: "https://github.com/apple/swift-log.git", from: "1.6.0"),
+        // Phase 5 gave the metrics facade its call sites (query duration
+        // timers in Repo.execute), so the no-facade-deps-without-callers
+        // policy is satisfied now.
+        .package(url: "https://github.com/apple/swift-metrics.git", from: "2.5.0"),
+        // Changeset/ValidatedChanges/TableModel — the Flight-independent
+        // validation + dirty-tracking layer (design §11.2). Extracted from
+        // flight-data-core precisely so Hangar could consume it.
+        .package(path: "../../Data/swift-changeset"),
+        // swift-syntax bumps its major with each Swift release; the open
+        // range is the community convention for macro packages.
+        .package(url: "https://github.com/swiftlang/swift-syntax.git", "601.0.0"..<"999.0.0"),
+    ],
+    targets: [
+        .target(
+            name: "Hangar",
+            dependencies: [
+                "HangarMacrosImpl",
+                .product(name: "PostgresNIO", package: "postgres-nio"),
+                .product(name: "Logging", package: "swift-log"),
+                .product(name: "Metrics", package: "swift-metrics"),
+                .product(name: "Changesets", package: "swift-changeset"),
+            ],
+            swiftSettings: [
+                // Strict concurrency is the default under tools 6.x; kept
+                // explicit as documentation of intent.
+                .swiftLanguageMode(.v6)
+            ]
+        ),
+        .macro(
+            name: "HangarMacrosImpl",
+            dependencies: [
+                .product(name: "SwiftSyntax", package: "swift-syntax"),
+                .product(name: "SwiftSyntaxMacros", package: "swift-syntax"),
+                .product(name: "SwiftCompilerPlugin", package: "swift-syntax"),
+                .product(name: "SwiftDiagnostics", package: "swift-syntax"),
+                .product(name: "SwiftSyntaxBuilder", package: "swift-syntax"),
+            ]
+        ),
+        .testTarget(
+            name: "HangarTests",
+            dependencies: [
+                "Hangar",
+                .product(name: "PostgresNIO", package: "postgres-nio"),
+            ]
+        ),
+        // Benchmarks live in an executable, not the test suite: they need a
+        // real server, they take seconds not milliseconds, and their output
+        // is numbers to read rather than assertions to pass. Run with
+        // `swift run -c release hangar-bench` (see BENCHMARKS.md).
+        .executableTarget(
+            name: "hangar-bench",
+            dependencies: [
+                "Hangar",
+                .product(name: "PostgresNIO", package: "postgres-nio"),
+            ],
+            swiftSettings: [.swiftLanguageMode(.v6)]
+        ),
+        // Macro fixture suite (design §4.4: fixtures ARE the spec). XCTest,
+        // because assertMacroExpansion ships in SwiftSyntaxMacrosTestSupport
+        // as XCTest-based.
+        .testTarget(
+            name: "HangarMacroTests",
+            dependencies: [
+                "HangarMacrosImpl",
+                .product(name: "SwiftSyntaxMacros", package: "swift-syntax"),
+                .product(name: "SwiftSyntaxMacroExpansion", package: "swift-syntax"),
+                .product(name: "SwiftSyntaxMacrosTestSupport", package: "swift-syntax"),
+            ]
+        ),
+    ]
+)

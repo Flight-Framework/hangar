@@ -1,0 +1,343 @@
+import Changesets
+import PostgresNIO
+
+/// A rendered statement: SQL with `$n` placeholders plus the binds that fill
+/// them, in placeholder order.
+struct RenderedStatement {
+    var sql: String
+    var binds: [SQLBind]
+}
+
+extension RenderedStatement {
+    /// The PostgresNIO query, with every bind applied. Throwing binds
+    /// (JSONB encoding) surface here — before anything reaches the wire.
+    func postgresQuery() throws -> PostgresQuery {
+        var bindings = PostgresBindings(capacity: binds.count)
+        for bind in binds {
+            try bind.apply(&bindings)
+        }
+        return PostgresQuery(unsafeSQL: sql, binds: bindings)
+    }
+}
+
+/// Collects binds and hands out `$n` placeholders in order — shared down
+/// into subquery rendering so placeholder numbering stays consistent
+/// across nesting.
+struct BindWriter {
+    var binds: [SQLBind] = []
+    /// True inside multi-table scopes (correlated subqueries, joins):
+    /// column references render `"table"."name"` instead of bare names.
+    var qualified = false
+
+    mutating func placeholder(_ bind: SQLBind) -> String {
+        binds.append(bind)
+        return "$\(binds.count)"
+    }
+}
+
+/// A subquery's SQL, rendered lazily against the outer statement's writer
+/// (§8): the payoff of owning the AST is that nesting needs no special
+/// mechanism beyond sharing the placeholder counter.
+struct SubquerySQL: Sendable {
+    let render: @Sendable (inout BindWriter) -> String
+}
+
+/// AST → SQL text + ordered binds (design §2, layer 3). Identifiers are
+/// always double-quoted; values are always parameters. Column lists are
+/// always explicit and in schema order — never `*` — which is what lets the
+/// generated decoder consume cells positionally.
+enum SQLRenderer {
+
+    // MARK: Statements
+
+    static func select<M, R>(_ query: Query<M, R>) -> RenderedStatement {
+        var writer = BindWriter()
+        let sql = selectText(query, writer: &writer)
+        return RenderedStatement(sql: sql, binds: writer.binds)
+    }
+
+    /// The full SELECT statement text, appending binds to `writer` — the
+    /// entry point subqueries reuse.
+    static func selectText<M, R>(_ query: Query<M, R>, writer: inout BindWriter) -> String {
+        let list: String
+        if let selection = query.selection {
+            list = selection.items
+                .map { item in
+                    let rendered = render(item.expression, writer: &writer)
+                    return item.alias.map { "\(rendered) AS \(quote($0))" } ?? rendered
+                }
+                .joined(separator: ", ")
+        } else {
+            list = M.schema.selectList
+        }
+        var sql = "SELECT \(query.isDistinct ? "DISTINCT " : "")\(list) FROM \(M.schema.quotedName)"
+        appendWhere(query.predicate, to: &sql, writer: &writer)
+        if !query.grouping.isEmpty {
+            let terms = query.grouping
+                .map { render($0, writer: &writer) }
+                .joined(separator: ", ")
+            sql += " GROUP BY \(terms)"
+        }
+        if let having = query.having {
+            sql += " HAVING \(render(having.expression, writer: &writer))"
+        }
+        if !query.orderings.isEmpty {
+            let terms = query.orderings
+                .map { "\(quote($0.column)) \($0.direction.rawValue)" }
+                .joined(separator: ", ")
+            sql += " ORDER BY \(terms)"
+        }
+        // LIMIT/OFFSET are validated Ints; rendered literally.
+        if let limit = query.rowLimit { sql += " LIMIT \(limit)" }
+        if let offset = query.rowOffset { sql += " OFFSET \(offset)" }
+        return sql
+    }
+
+    /// `SELECT count(*)` over the query's predicate. Ordering, limit, and
+    /// offset are deliberately ignored — `count` answers "how many match".
+    static func count<M, R>(_ query: Query<M, R>) -> RenderedStatement {
+        var writer = BindWriter()
+        var sql = "SELECT count(*) FROM \(M.schema.quotedName)"
+        appendWhere(query.predicate, to: &sql, writer: &writer)
+        return RenderedStatement(sql: sql, binds: writer.binds)
+    }
+
+    static func exists<M, R>(_ query: Query<M, R>) -> RenderedStatement {
+        var writer = BindWriter()
+        var inner = "SELECT 1 FROM \(M.schema.quotedName)"
+        appendWhere(query.predicate, to: &inner, writer: &writer)
+        return RenderedStatement(sql: "SELECT EXISTS (\(inner))", binds: writer.binds)
+    }
+
+    /// `SELECT 1 FROM ... WHERE ...` for a correlated EXISTS predicate
+    /// (§8): rendered fully qualified, because the inner table's columns
+    /// and the outer query's coexist in one scope.
+    static func existsText<M, R>(_ query: Query<M, R>, writer: inout BindWriter) -> String {
+        let wasQualified = writer.qualified
+        writer.qualified = true
+        defer { writer.qualified = wasQualified }
+        var sql = "SELECT 1 FROM \(M.schema.quotedName)"
+        appendWhere(query.predicate, to: &sql, writer: &writer)
+        return sql
+    }
+
+    static func insert<M: Table>(_ model: M) throws -> RenderedStatement {
+        let schema = M.schema
+        let columns = schema.insertable
+        var writer = BindWriter()
+        let placeholders = try columns
+            .map { writer.placeholder(try bind(model, $0.name, in: schema)) }
+            .joined(separator: ", ")
+        let sql = """
+            INSERT INTO \(schema.quotedName) (\(schema.insertList)) \
+            VALUES (\(placeholders)) RETURNING \(schema.selectList)
+            """
+        return RenderedStatement(sql: sql, binds: writer.binds)
+    }
+
+    static func update<M: Table>(_ model: M) throws -> RenderedStatement {
+        let schema = M.schema
+        let sets = schema.updatable
+        guard !sets.isEmpty else {
+            throw HangarError.noUpdatableColumns(table: schema.name)
+        }
+        var writer = BindWriter()
+        let assignments = try sets
+            .map { "\($0.quotedName) = \(writer.placeholder(try bind(model, $0.name, in: schema)))" }
+            .joined(separator: ", ")
+        let sql = """
+            UPDATE \(schema.quotedName) SET \(assignments) \
+            WHERE \(try primaryKeyClause(model, schema: schema, writer: &writer)) \
+            RETURNING \(schema.selectList)
+            """
+        return RenderedStatement(sql: sql, binds: writer.binds)
+    }
+
+    // MARK: Changeset statements (design §11.2)
+    //
+    // A changeset's write is *minimal*: only `changedFields` appear in the
+    // column list / SET clause. Column order is schema order (filtered), so
+    // the SQL is deterministic regardless of dictionary ordering.
+
+    static func insert<M: Table>(
+        _ validated: ValidatedChanges, into type: M.Type,
+        onConflict: OnConflict<M>? = nil
+    ) throws -> RenderedStatement {
+        let schema = M.schema
+        try checkKnown(validated.changedFields.keys, in: schema)
+        let conflict = try onConflict.map { " \(try conflictClause($0))" } ?? ""
+        let columns = schema.columns.filter { validated.changedFields[$0.name] != nil }
+        guard !columns.isEmpty else {
+            // Nothing changed: every column falls to its database default.
+            return RenderedStatement(
+                sql: "INSERT INTO \(schema.quotedName) DEFAULT VALUES\(conflict) RETURNING \(schema.selectList)",
+                binds: [])
+        }
+        var writer = BindWriter()
+        let placeholders = try columns
+            .map {
+                writer.placeholder(
+                    try changesetBind(type, column: $0.name, value: validated.changedFields[$0.name]!, in: schema))
+            }
+            .joined(separator: ", ")
+        let sql = """
+            INSERT INTO \(schema.quotedName) (\(columnList(columns))) \
+            VALUES (\(placeholders))\(conflict) RETURNING \(schema.selectList)
+            """
+        return RenderedStatement(sql: sql, binds: writer.binds)
+    }
+
+    static func update<M: Table>(
+        _ validated: ValidatedChanges, into type: M.Type
+    ) throws -> RenderedStatement {
+        let schema = M.schema
+        guard let identity = validated.identity, !identity.isEmpty else {
+            throw HangarError.updateWithoutIdentity(table: schema.name)
+        }
+        try checkKnown(validated.changedFields.keys, in: schema)
+        try checkKnown(identity.keys, in: schema)
+        let sets = schema.columns.filter { validated.changedFields[$0.name] != nil }
+        guard !sets.isEmpty else {
+            // The Repo short-circuits empty changesets; reaching here means
+            // a hand-built ValidatedChanges with nothing to do.
+            throw HangarError.noUpdatableColumns(table: schema.name)
+        }
+        var writer = BindWriter()
+        let assignments = try sets
+            .map {
+                "\($0.quotedName) = \(writer.placeholder(try changesetBind(type, column: $0.name, value: validated.changedFields[$0.name]!, in: schema)))"
+            }
+            .joined(separator: ", ")
+        let conditions = try schema.columns
+            .filter { identity[$0.name] != nil }
+            .map {
+                "\($0.quotedName) = \(writer.placeholder(try changesetBind(type, column: $0.name, value: identity[$0.name]!, in: schema)))"
+            }
+            .joined(separator: " AND ")
+        let sql = """
+            UPDATE \(schema.quotedName) SET \(assignments) \
+            WHERE \(conditions) \
+            RETURNING \(schema.selectList)
+            """
+        return RenderedStatement(sql: sql, binds: writer.binds)
+    }
+
+    private static func changesetBind<M: Table>(
+        _ type: M.Type, column: String, value: any Sendable, in schema: TableSchema
+    ) throws -> SQLBind {
+        guard let bind = M._changesetBind(column: column, value: value) else {
+            throw HangarError.changesetValueMismatch(table: schema.name, column: column)
+        }
+        return bind
+    }
+
+    private static func checkKnown(
+        _ names: some Sequence<String>, in schema: TableSchema
+    ) throws {
+        let known = Set(schema.columns.map(\.name))
+        if let stray = names.first(where: { !known.contains($0) }) {
+            throw HangarError.unknownColumn(table: schema.name, column: stray)
+        }
+    }
+
+    static func delete<M: Table>(_ model: M) throws -> RenderedStatement {
+        let schema = M.schema
+        var writer = BindWriter()
+        // RETURNING the key so the Repo can distinguish "deleted" from
+        // "no such row" without a command tag.
+        let sql = """
+            DELETE FROM \(schema.quotedName) \
+            WHERE \(try primaryKeyClause(model, schema: schema, writer: &writer)) \
+            RETURNING \(schema.primaryKey[0].quotedName)
+            """
+        return RenderedStatement(sql: sql, binds: writer.binds)
+    }
+
+    // MARK: Expression rendering
+
+    static func appendWhere(_ predicate: Predicate?, to sql: inout String, writer: inout BindWriter) {
+        guard let predicate else { return }
+        sql += " WHERE \(render(predicate.expression, writer: &writer))"
+    }
+
+    /// Every compound is fully parenthesized — slightly noisy SQL, zero
+    /// precedence ambiguity.
+    static func render(_ expression: SQLExpression, writer: inout BindWriter) -> String {
+        switch expression {
+        case .column(let table, let name):
+            if writer.qualified, !table.isEmpty {
+                return "\(quote(table)).\(quote(name))"
+            }
+            return quote(name)
+        case .bind(let bind):
+            return writer.placeholder(bind)
+        case .infix(let op, let lhs, let rhs):
+            return "(\(render(lhs, writer: &writer)) \(op) \(render(rhs, writer: &writer)))"
+        case .anyOf(let lhs, let rhs):
+            return "(\(render(lhs, writer: &writer)) = ANY(\(render(rhs, writer: &writer))))"
+        case .function(let name, let arguments):
+            let rendered = arguments.map { render($0, writer: &writer) }.joined(separator: ", ")
+            return "\(name)(\(rendered))"
+        case .cast(let operand, let type):
+            return "(\(render(operand, writer: &writer)))::\(type)"
+        case .inSubquery(let lhs, let subquery):
+            return "(\(render(lhs, writer: &writer)) IN (\(subquery.render(&writer))))"
+        case .existsSubquery(let subquery):
+            return "EXISTS (\(subquery.render(&writer)))"
+        case .fragment(let parts):
+            // Parenthesized so a fragment predicate composes under AND/OR
+            // without precedence surprises.
+            var text = "("
+            for part in parts {
+                switch part {
+                case .sql(let sql):
+                    text += sql
+                case .bind(let bind):
+                    text += writer.placeholder(bind)
+                }
+            }
+            return text + ")"
+        case .not(let operand):
+            return "NOT (\(render(operand, writer: &writer)))"
+        case .isNull(let operand):
+            return "(\(render(operand, writer: &writer)) IS NULL)"
+        case .isNotNull(let operand):
+            return "(\(render(operand, writer: &writer)) IS NOT NULL)"
+        }
+    }
+
+    // MARK: Helpers
+
+    private static func primaryKeyClause<M: Table>(
+        _ model: M, schema: TableSchema, writer: inout BindWriter
+    ) throws -> String {
+        try schema.primaryKey
+            .map { "\($0.quotedName) = \(writer.placeholder(try bind(model, $0.name, in: schema)))" }
+            .joined(separator: " AND ")
+    }
+
+    private static func bind<M: Table>(_ model: M, _ column: String, in schema: TableSchema) throws -> SQLBind {
+        guard let bind = model._bind(for: column) else {
+            throw HangarError.unknownColumn(table: schema.name, column: column)
+        }
+        return bind
+    }
+
+    /// For dynamic subsets only (changeset writes); the whole-table lists
+    /// are precomputed on `TableSchema`.
+    private static func columnList(_ columns: [ColumnDefinition]) -> String {
+        columns.map(\.quotedName).joined(separator: ", ")
+    }
+
+    /// Double-quotes an identifier, doubling any embedded quote. The
+    /// common case (no embedded quote) avoids Foundation's
+    /// `replacingOccurrences`, which is slow enough to dominate rendering
+    /// when called per column per query. Identifiers are almost always
+    /// pre-quoted at schema-construction time anyway; this is the fallback.
+    static func quote(_ identifier: String) -> String {
+        guard identifier.utf8.contains(UInt8(ascii: "\"")) else {
+            return "\"\(identifier)\""
+        }
+        return "\"\(identifier.replacingOccurrences(of: "\"", with: "\"\""))\""
+    }
+}

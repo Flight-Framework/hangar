@@ -1,0 +1,897 @@
+// Design §4.4 — the macro expansion fixtures, written first, implemented
+// against. These expected-output strings ARE the specification of @Entity's
+// expansion; the design doc's prose examples are illustrative, these are
+// normative.
+//
+// Cases follow the §4.4 list, restricted to Phase 1–2 scope: plain table,
+// custom column names, optionals, enum column, JSONB, composite PK,
+// database-generated key, access-level matching, and the diagnostics.
+// Since Phase 2 (changeset integration, design §11.2) every entity also
+// gets a `Changesets.TableModel` conformance: `tableName`, the `columns`
+// keypath catalog, and the `_changesetBind` erased-value switch. Hangar's
+// own column DSL sits under `queryColumns` — renamed from Phase 1's
+// `columns` to leave that name to TableModel (see README).
+// Association fixtures (has-many, belongs-to) arrive with Phase 3.
+
+import SwiftSyntax
+import SwiftSyntaxMacroExpansion
+import SwiftSyntaxMacros
+import SwiftSyntaxMacrosTestSupport
+import XCTest
+
+@testable import HangarMacrosImpl
+
+// MacroSpec so the harness knows the conformances @attached(extension)
+// declares — without it the extension macro receives an empty `protocols`
+// list and emits nothing (same first-run finding as Flight Core).
+private let testMacros: [String: MacroSpec] = [
+    "Entity": MacroSpec(
+        type: EntityMacro.self, conformances: ["Hangar.Table", "Changesets.TableModel"]),
+    "ID": MacroSpec(type: IDMacro.self),
+    "Column": MacroSpec(type: ColumnNameMacro.self),
+    "JSONB": MacroSpec(type: JSONBMacro.self),
+]
+
+final class EntityMacroFixtureTests: XCTestCase {
+
+    // MARK: Fixture 1 — plain table (snake_case naming, incl. acronym run)
+
+    func testPlainTable() {
+        assertMacroExpansion(
+            """
+            @Entity("posts")
+            struct Post: Sendable {
+                @ID let id: UUID
+                var title: String
+                var viewCount: Int
+                let authorID: UUID
+            }
+            """,
+            expandedSource: """
+            struct Post: Sendable {
+                let id: UUID
+                var title: String
+                var viewCount: Int
+                let authorID: UUID
+
+                struct Columns: Sendable {
+                    let id = Hangar.Column<UUID>("id", table: "posts")
+                    let title = Hangar.Column<String>("title", table: "posts")
+                    let viewCount = Hangar.Column<Int>("view_count", table: "posts")
+                    let authorID = Hangar.Column<UUID>("author_id", table: "posts")
+                }
+
+                static let queryColumns = Columns()
+
+                static let schema = Hangar.TableSchema(
+                    name: "posts",
+                    columns: [
+                        Hangar.ColumnDefinition(name: "id", isPrimaryKey: true, isGenerated: false),
+                        Hangar.ColumnDefinition(name: "title", isPrimaryKey: false, isGenerated: false),
+                        Hangar.ColumnDefinition(name: "view_count", isPrimaryKey: false, isGenerated: false),
+                        Hangar.ColumnDefinition(name: "author_id", isPrimaryKey: false, isGenerated: false),
+                    ]
+                )
+
+                static let tableName = "posts"
+
+                static let columns: [Changesets.TableColumn<Post>] = [
+                    Changesets.TableColumn("id", \\Post.id, primaryKey: true),
+                    Changesets.TableColumn("title", \\Post.title),
+                    Changesets.TableColumn("view_count", \\Post.viewCount),
+                    Changesets.TableColumn("author_id", \\Post.authorID),
+                ]
+
+                init(id: UUID, title: String, viewCount: Int, authorID: UUID) {
+                    self.id = id
+                    self.title = title
+                    self.viewCount = viewCount
+                    self.authorID = authorID
+                }
+
+                init(from row: PostgresRow) throws {
+                    let cells = row.makeRandomAccess()
+                    try Hangar._checkColumnCount(cells.count, expected: 4, table: "posts")
+                    self.id = try Hangar._decodeColumn(UUID.self, from: cells[0], table: "posts", column: "id")
+                    self.title = try Hangar._decodeColumn(String.self, from: cells[1], table: "posts", column: "title")
+                    self.viewCount = try Hangar._decodeColumn(Int.self, from: cells[2], table: "posts", column: "view_count")
+                    self.authorID = try Hangar._decodeColumn(UUID.self, from: cells[3], table: "posts", column: "author_id")
+                }
+
+                func _bind(for column: String) -> Hangar.SQLBind? {
+                    switch column {
+                    case "id":
+                        return Hangar.SQLBind(self.id)
+                    case "title":
+                        return Hangar.SQLBind(self.title)
+                    case "view_count":
+                        return Hangar.SQLBind(self.viewCount)
+                    case "author_id":
+                        return Hangar.SQLBind(self.authorID)
+                    default:
+                        return nil
+                    }
+                }
+
+                static func _changesetBind(column: String, value: any Sendable) -> Hangar.SQLBind? {
+                    switch column {
+                    case "id":
+                        return (value as? UUID).map {
+                            Hangar.SQLBind($0)
+                        }
+                    case "title":
+                        return (value as? String).map {
+                            Hangar.SQLBind($0)
+                        }
+                    case "view_count":
+                        return (value as? Int).map {
+                            Hangar.SQLBind($0)
+                        }
+                    case "author_id":
+                        return (value as? UUID).map {
+                            Hangar.SQLBind($0)
+                        }
+                    default:
+                        return nil
+                    }
+                }
+            }
+
+            extension Post: Hangar.Table, Changesets.TableModel {
+            }
+            """,
+            macroSpecs: testMacros
+        )
+    }
+
+    // MARK: Fixture 2 — custom column name, optionals, and a var default
+    // (public type, so the generated surface is access-matched)
+
+    func testCustomNamesOptionalsAndDefaults() {
+        assertMacroExpansion(
+            """
+            @Entity("users")
+            public struct User: Sendable {
+                @ID let id: UUID
+                @Column("email_address") var email: String
+                var nickname: String?
+                var loginCount: Int = 0
+            }
+            """,
+            expandedSource: """
+            public struct User: Sendable {
+                let id: UUID
+                var email: String
+                var nickname: String?
+                var loginCount: Int = 0
+
+                public struct Columns: Sendable {
+                    public let id = Hangar.Column<UUID>("id", table: "users")
+                    public let email = Hangar.Column<String>("email_address", table: "users")
+                    public let nickname = Hangar.Column<String?>("nickname", table: "users")
+                    public let loginCount = Hangar.Column<Int>("login_count", table: "users")
+                }
+
+                public static let queryColumns = Columns()
+
+                public static let schema = Hangar.TableSchema(
+                    name: "users",
+                    columns: [
+                        Hangar.ColumnDefinition(name: "id", isPrimaryKey: true, isGenerated: false),
+                        Hangar.ColumnDefinition(name: "email_address", isPrimaryKey: false, isGenerated: false),
+                        Hangar.ColumnDefinition(name: "nickname", isPrimaryKey: false, isGenerated: false),
+                        Hangar.ColumnDefinition(name: "login_count", isPrimaryKey: false, isGenerated: false),
+                    ]
+                )
+
+                public static let tableName = "users"
+
+                public static let columns: [Changesets.TableColumn<User>] = [
+                    Changesets.TableColumn("id", \\User.id, primaryKey: true),
+                    Changesets.TableColumn("email_address", \\User.email),
+                    Changesets.TableColumn("nickname", \\User.nickname),
+                    Changesets.TableColumn("login_count", \\User.loginCount),
+                ]
+
+                public init(id: UUID, email: String, nickname: String? = nil, loginCount: Int = 0) {
+                    self.id = id
+                    self.email = email
+                    self.nickname = nickname
+                    self.loginCount = loginCount
+                }
+
+                public init(from row: PostgresRow) throws {
+                    let cells = row.makeRandomAccess()
+                    try Hangar._checkColumnCount(cells.count, expected: 4, table: "users")
+                    self.id = try Hangar._decodeColumn(UUID.self, from: cells[0], table: "users", column: "id")
+                    self.email = try Hangar._decodeColumn(String.self, from: cells[1], table: "users", column: "email_address")
+                    self.nickname = try Hangar._decodeColumn(String?.self, from: cells[2], table: "users", column: "nickname")
+                    self.loginCount = try Hangar._decodeColumn(Int.self, from: cells[3], table: "users", column: "login_count")
+                }
+
+                public func _bind(for column: String) -> Hangar.SQLBind? {
+                    switch column {
+                    case "id":
+                        return Hangar.SQLBind(self.id)
+                    case "email_address":
+                        return Hangar.SQLBind(self.email)
+                    case "nickname":
+                        return Hangar.SQLBind(self.nickname)
+                    case "login_count":
+                        return Hangar.SQLBind(self.loginCount)
+                    default:
+                        return nil
+                    }
+                }
+
+                public static func _changesetBind(column: String, value: any Sendable) -> Hangar.SQLBind? {
+                    switch column {
+                    case "id":
+                        return (value as? UUID).map {
+                            Hangar.SQLBind($0)
+                        }
+                    case "email_address":
+                        return (value as? String).map {
+                            Hangar.SQLBind($0)
+                        }
+                    case "nickname":
+                        return (value as? String?).map {
+                            Hangar.SQLBind($0)
+                        }
+                    case "login_count":
+                        return (value as? Int).map {
+                            Hangar.SQLBind($0)
+                        }
+                    default:
+                        return nil
+                    }
+                }
+            }
+
+            extension User: Hangar.Table, Changesets.TableModel {
+            }
+            """,
+            macroSpecs: testMacros
+        )
+    }
+
+    // MARK: Fixture 3 — enum column and JSONB (required + optional)
+    // Pins that a PostgresEnum column needs no special casing in the macro:
+    // the expansion is identical to a plain column's; the enum's encoding
+    // lives entirely in the PostgresEnum conformance.
+
+    func testEnumAndJSONBColumns() {
+        assertMacroExpansion(
+            """
+            @Entity("articles")
+            struct Article: Sendable {
+                @ID let id: UUID
+                var status: Status
+                @JSONB var metadata: ArticleMetadata
+                @JSONB var draft: DraftState?
+            }
+            """,
+            expandedSource: """
+            struct Article: Sendable {
+                let id: UUID
+                var status: Status
+                var metadata: ArticleMetadata
+                var draft: DraftState?
+
+                struct Columns: Sendable {
+                    let id = Hangar.Column<UUID>("id", table: "articles")
+                    let status = Hangar.Column<Status>("status", table: "articles")
+                    let metadata = Hangar.Column<ArticleMetadata>("metadata", table: "articles")
+                    let draft = Hangar.Column<DraftState?>("draft", table: "articles")
+                }
+
+                static let queryColumns = Columns()
+
+                static let schema = Hangar.TableSchema(
+                    name: "articles",
+                    columns: [
+                        Hangar.ColumnDefinition(name: "id", isPrimaryKey: true, isGenerated: false),
+                        Hangar.ColumnDefinition(name: "status", isPrimaryKey: false, isGenerated: false),
+                        Hangar.ColumnDefinition(name: "metadata", isPrimaryKey: false, isGenerated: false),
+                        Hangar.ColumnDefinition(name: "draft", isPrimaryKey: false, isGenerated: false),
+                    ]
+                )
+
+                static let tableName = "articles"
+
+                static let columns: [Changesets.TableColumn<Article>] = [
+                    Changesets.TableColumn("id", \\Article.id, primaryKey: true),
+                    Changesets.TableColumn("status", \\Article.status),
+                    Changesets.TableColumn("metadata", \\Article.metadata),
+                    Changesets.TableColumn("draft", \\Article.draft),
+                ]
+
+                init(id: UUID, status: Status, metadata: ArticleMetadata, draft: DraftState? = nil) {
+                    self.id = id
+                    self.status = status
+                    self.metadata = metadata
+                    self.draft = draft
+                }
+
+                init(from row: PostgresRow) throws {
+                    let cells = row.makeRandomAccess()
+                    try Hangar._checkColumnCount(cells.count, expected: 4, table: "articles")
+                    self.id = try Hangar._decodeColumn(UUID.self, from: cells[0], table: "articles", column: "id")
+                    self.status = try Hangar._decodeColumn(Status.self, from: cells[1], table: "articles", column: "status")
+                    self.metadata = try Hangar._decodeJSONB(ArticleMetadata.self, from: cells[2], table: "articles", column: "metadata")
+                    self.draft = try Hangar._decodeOptionalJSONB(DraftState.self, from: cells[3], table: "articles", column: "draft")
+                }
+
+                func _bind(for column: String) -> Hangar.SQLBind? {
+                    switch column {
+                    case "id":
+                        return Hangar.SQLBind(self.id)
+                    case "status":
+                        return Hangar.SQLBind(self.status)
+                    case "metadata":
+                        return Hangar.SQLBind(jsonb: self.metadata)
+                    case "draft":
+                        return Hangar.SQLBind(jsonb: self.draft)
+                    default:
+                        return nil
+                    }
+                }
+
+                static func _changesetBind(column: String, value: any Sendable) -> Hangar.SQLBind? {
+                    switch column {
+                    case "id":
+                        return (value as? UUID).map {
+                            Hangar.SQLBind($0)
+                        }
+                    case "status":
+                        return (value as? Status).map {
+                            Hangar.SQLBind($0)
+                        }
+                    case "metadata":
+                        return (value as? ArticleMetadata).map {
+                            Hangar.SQLBind(jsonb: $0)
+                        }
+                    case "draft":
+                        return (value as? DraftState?).map {
+                            Hangar.SQLBind(jsonb: $0)
+                        }
+                    default:
+                        return nil
+                    }
+                }
+            }
+
+            extension Article: Hangar.Table, Changesets.TableModel {
+            }
+            """,
+            macroSpecs: testMacros
+        )
+    }
+
+    // MARK: Fixture 4 — composite primary key
+
+    func testCompositePrimaryKey() {
+        assertMacroExpansion(
+            """
+            @Entity("post_tags")
+            struct PostTag: Sendable {
+                @ID let postID: UUID
+                @ID let tagID: UUID
+                var position: Int
+            }
+            """,
+            expandedSource: """
+            struct PostTag: Sendable {
+                let postID: UUID
+                let tagID: UUID
+                var position: Int
+
+                struct Columns: Sendable {
+                    let postID = Hangar.Column<UUID>("post_id", table: "post_tags")
+                    let tagID = Hangar.Column<UUID>("tag_id", table: "post_tags")
+                    let position = Hangar.Column<Int>("position", table: "post_tags")
+                }
+
+                static let queryColumns = Columns()
+
+                static let schema = Hangar.TableSchema(
+                    name: "post_tags",
+                    columns: [
+                        Hangar.ColumnDefinition(name: "post_id", isPrimaryKey: true, isGenerated: false),
+                        Hangar.ColumnDefinition(name: "tag_id", isPrimaryKey: true, isGenerated: false),
+                        Hangar.ColumnDefinition(name: "position", isPrimaryKey: false, isGenerated: false),
+                    ]
+                )
+
+                static let tableName = "post_tags"
+
+                static let columns: [Changesets.TableColumn<PostTag>] = [
+                    Changesets.TableColumn("post_id", \\PostTag.postID, primaryKey: true),
+                    Changesets.TableColumn("tag_id", \\PostTag.tagID, primaryKey: true),
+                    Changesets.TableColumn("position", \\PostTag.position),
+                ]
+
+                init(postID: UUID, tagID: UUID, position: Int) {
+                    self.postID = postID
+                    self.tagID = tagID
+                    self.position = position
+                }
+
+                init(from row: PostgresRow) throws {
+                    let cells = row.makeRandomAccess()
+                    try Hangar._checkColumnCount(cells.count, expected: 3, table: "post_tags")
+                    self.postID = try Hangar._decodeColumn(UUID.self, from: cells[0], table: "post_tags", column: "post_id")
+                    self.tagID = try Hangar._decodeColumn(UUID.self, from: cells[1], table: "post_tags", column: "tag_id")
+                    self.position = try Hangar._decodeColumn(Int.self, from: cells[2], table: "post_tags", column: "position")
+                }
+
+                func _bind(for column: String) -> Hangar.SQLBind? {
+                    switch column {
+                    case "post_id":
+                        return Hangar.SQLBind(self.postID)
+                    case "tag_id":
+                        return Hangar.SQLBind(self.tagID)
+                    case "position":
+                        return Hangar.SQLBind(self.position)
+                    default:
+                        return nil
+                    }
+                }
+
+                static func _changesetBind(column: String, value: any Sendable) -> Hangar.SQLBind? {
+                    switch column {
+                    case "post_id":
+                        return (value as? UUID).map {
+                            Hangar.SQLBind($0)
+                        }
+                    case "tag_id":
+                        return (value as? UUID).map {
+                            Hangar.SQLBind($0)
+                        }
+                    case "position":
+                        return (value as? Int).map {
+                            Hangar.SQLBind($0)
+                        }
+                    default:
+                        return nil
+                    }
+                }
+            }
+
+            extension PostTag: Hangar.Table, Changesets.TableModel {
+            }
+            """,
+            macroSpecs: testMacros
+        )
+    }
+
+    // MARK: Fixture 5 — database-generated key (bigserial / identity)
+
+    func testGeneratedKey() {
+        assertMacroExpansion(
+            """
+            @Entity("events")
+            struct Event: Sendable {
+                @ID(generated: true) var id: Int = 0
+                var name: String
+            }
+            """,
+            expandedSource: """
+            struct Event: Sendable {
+                var id: Int = 0
+                var name: String
+
+                struct Columns: Sendable {
+                    let id = Hangar.Column<Int>("id", table: "events")
+                    let name = Hangar.Column<String>("name", table: "events")
+                }
+
+                static let queryColumns = Columns()
+
+                static let schema = Hangar.TableSchema(
+                    name: "events",
+                    columns: [
+                        Hangar.ColumnDefinition(name: "id", isPrimaryKey: true, isGenerated: true),
+                        Hangar.ColumnDefinition(name: "name", isPrimaryKey: false, isGenerated: false),
+                    ]
+                )
+
+                static let tableName = "events"
+
+                static let columns: [Changesets.TableColumn<Event>] = [
+                    Changesets.TableColumn("id", \\Event.id, primaryKey: true),
+                    Changesets.TableColumn("name", \\Event.name),
+                ]
+
+                init(id: Int = 0, name: String) {
+                    self.id = id
+                    self.name = name
+                }
+
+                init(from row: PostgresRow) throws {
+                    let cells = row.makeRandomAccess()
+                    try Hangar._checkColumnCount(cells.count, expected: 2, table: "events")
+                    self.id = try Hangar._decodeColumn(Int.self, from: cells[0], table: "events", column: "id")
+                    self.name = try Hangar._decodeColumn(String.self, from: cells[1], table: "events", column: "name")
+                }
+
+                func _bind(for column: String) -> Hangar.SQLBind? {
+                    switch column {
+                    case "id":
+                        return Hangar.SQLBind(self.id)
+                    case "name":
+                        return Hangar.SQLBind(self.name)
+                    default:
+                        return nil
+                    }
+                }
+
+                static func _changesetBind(column: String, value: any Sendable) -> Hangar.SQLBind? {
+                    switch column {
+                    case "id":
+                        return (value as? Int).map {
+                            Hangar.SQLBind($0)
+                        }
+                    case "name":
+                        return (value as? String).map {
+                            Hangar.SQLBind($0)
+                        }
+                    default:
+                        return nil
+                    }
+                }
+            }
+
+            extension Event: Hangar.Table, Changesets.TableModel {
+            }
+            """,
+            macroSpecs: testMacros
+        )
+    }
+
+    // MARK: Diagnostics
+
+    func testRejectsClass() {
+        assertMacroExpansion(
+            """
+            @Entity("posts")
+            class Post {
+                @ID let id: UUID = UUID()
+            }
+            """,
+            expandedSource: """
+            class Post {
+                let id: UUID = UUID()
+            }
+
+            extension Post: Hangar.Table, Changesets.TableModel {
+            }
+            """,
+            diagnostics: [
+                DiagnosticSpec(
+                    message: "@Entity can only be attached to a struct — models are values (design §3).",
+                    line: 1, column: 1)
+            ],
+            macroSpecs: testMacros
+        )
+    }
+
+    func testRequiresPrimaryKey() {
+        assertMacroExpansion(
+            """
+            @Entity("posts")
+            struct Post: Sendable {
+                var title: String
+            }
+            """,
+            expandedSource: """
+            struct Post: Sendable {
+                var title: String
+            }
+
+            extension Post: Hangar.Table, Changesets.TableModel {
+            }
+            """,
+            diagnostics: [
+                DiagnosticSpec(
+                    message: "@Entity needs a primary key — mark one or more properties with @ID.",
+                    line: 1, column: 1)
+            ],
+            macroSpecs: testMacros
+        )
+    }
+
+    func testRequiresTypeAnnotation() {
+        assertMacroExpansion(
+            """
+            @Entity("posts")
+            struct Post: Sendable {
+                @ID let id: UUID
+                var title = "untitled"
+            }
+            """,
+            expandedSource: """
+            struct Post: Sendable {
+                let id: UUID
+                var title = "untitled"
+            }
+
+            extension Post: Hangar.Table, Changesets.TableModel {
+            }
+            """,
+            diagnostics: [
+                DiagnosticSpec(
+                    message: "@Entity properties need an explicit type annotation — the column's Swift type is read from it.",
+                    line: 4, column: 5)
+            ],
+            macroSpecs: testMacros
+        )
+    }
+
+    func testRejectsInitializedLet() {
+        assertMacroExpansion(
+            """
+            @Entity("posts")
+            struct Post: Sendable {
+                @ID let id: UUID
+                let kind: String = "post"
+            }
+            """,
+            expandedSource: """
+            struct Post: Sendable {
+                let id: UUID
+                let kind: String = "post"
+            }
+
+            extension Post: Hangar.Table, Changesets.TableModel {
+            }
+            """,
+            diagnostics: [
+                DiagnosticSpec(
+                    message: "A 'let' with an initializer can't be decoded from a row (the value is already fixed). Make it 'var' or drop the initializer.",
+                    line: 4, column: 5)
+            ],
+            macroSpecs: testMacros
+        )
+    }
+
+    // MARK: snake_case unit coverage
+
+    func testSnakeCase() {
+        XCTAssertEqual(snakeCase("title"), "title")
+        XCTAssertEqual(snakeCase("viewCount"), "view_count")
+        XCTAssertEqual(snakeCase("authorID"), "author_id")
+        XCTAssertEqual(snakeCase("createdAt"), "created_at")
+        XCTAssertEqual(snakeCase("url"), "url")
+        XCTAssertEqual(snakeCase("URLString"), "url_string")
+        XCTAssertEqual(snakeCase("id"), "id")
+        XCTAssertEqual(snakeCase("userV2Flag"), "user_v2_flag")
+    }
+}
+
+// MARK: - Phase 3: associations (design §4 item 4, §4.3, §7.1)
+
+final class EntityAssociationFixtureTests: XCTestCase {
+
+    // MARK: Fixture 6 — all three association kinds
+
+    func testAssociations() {
+        assertMacroExpansion(
+            """
+            @Entity("posts")
+            struct Post: Sendable {
+                @ID let id: UUID
+                var title: String
+                let authorID: UUID
+
+                @HasMany(foreignKey: \\Comment.postID)
+                var comments: Loadable<[Comment]>
+
+                @BelongsTo(foreignKey: \\Post.authorID)
+                var author: Loadable<Author>
+
+                @HasOne(foreignKey: \\Extra.postID)
+                var extra: Loadable<Extra?>
+            }
+            """,
+            expandedSource: """
+            struct Post: Sendable {
+                let id: UUID
+                var title: String
+                let authorID: UUID
+                var comments: Loadable<[Comment]>
+                var author: Loadable<Author>
+                var extra: Loadable<Extra?>
+
+                struct Columns: Sendable {
+                    let id = Hangar.Column<UUID>("id", table: "posts")
+                    let title = Hangar.Column<String>("title", table: "posts")
+                    let authorID = Hangar.Column<UUID>("author_id", table: "posts")
+                }
+
+                static let queryColumns = Columns()
+
+                static let schema = Hangar.TableSchema(
+                    name: "posts",
+                    columns: [
+                        Hangar.ColumnDefinition(name: "id", isPrimaryKey: true, isGenerated: false),
+                        Hangar.ColumnDefinition(name: "title", isPrimaryKey: false, isGenerated: false),
+                        Hangar.ColumnDefinition(name: "author_id", isPrimaryKey: false, isGenerated: false),
+                    ]
+                )
+
+                static let tableName = "posts"
+
+                static let columns: [Changesets.TableColumn<Post>] = [
+                    Changesets.TableColumn("id", \\Post.id, primaryKey: true),
+                    Changesets.TableColumn("title", \\Post.title),
+                    Changesets.TableColumn("author_id", \\Post.authorID),
+                ]
+
+                init(id: UUID, title: String, authorID: UUID, comments: Loadable<[Comment]> = .notLoaded(association: "comments"), author: Loadable<Author> = .notLoaded(association: "author"), extra: Loadable<Extra?> = .notLoaded(association: "extra")) {
+                    self.id = id
+                    self.title = title
+                    self.authorID = authorID
+                    self.comments = comments
+                    self.author = author
+                    self.extra = extra
+                }
+
+                init(from row: PostgresRow) throws {
+                    let cells = row.makeRandomAccess()
+                    try Hangar._checkColumnCount(cells.count, expected: 3, table: "posts")
+                    self.id = try Hangar._decodeColumn(UUID.self, from: cells[0], table: "posts", column: "id")
+                    self.title = try Hangar._decodeColumn(String.self, from: cells[1], table: "posts", column: "title")
+                    self.authorID = try Hangar._decodeColumn(UUID.self, from: cells[2], table: "posts", column: "author_id")
+                    self.comments = .notLoaded(association: "comments")
+                    self.author = .notLoaded(association: "author")
+                    self.extra = .notLoaded(association: "extra")
+                }
+
+                func _bind(for column: String) -> Hangar.SQLBind? {
+                    switch column {
+                    case "id":
+                        return Hangar.SQLBind(self.id)
+                    case "title":
+                        return Hangar.SQLBind(self.title)
+                    case "author_id":
+                        return Hangar.SQLBind(self.authorID)
+                    default:
+                        return nil
+                    }
+                }
+
+                static func _changesetBind(column: String, value: any Sendable) -> Hangar.SQLBind? {
+                    switch column {
+                    case "id":
+                        return (value as? UUID).map {
+                            Hangar.SQLBind($0)
+                        }
+                    case "title":
+                        return (value as? String).map {
+                            Hangar.SQLBind($0)
+                        }
+                    case "author_id":
+                        return (value as? UUID).map {
+                            Hangar.SQLBind($0)
+                        }
+                    default:
+                        return nil
+                    }
+                }
+
+                static func _association(for keyPath: AnyKeyPath) -> (any Sendable)? {
+                    if keyPath == \\Post.comments {
+                        return Hangar._hasMany(name: "comments", parentKey: \\Post.id, foreignKey: \\Comment.postID, target: \\Post.comments)
+                    }
+                    if keyPath == \\Post.author {
+                        return Hangar._belongsTo(name: "author", foreignKey: \\Post.authorID, references: \\Author.id, target: \\Post.author)
+                    }
+                    if keyPath == \\Post.extra {
+                        return Hangar._hasOne(name: "extra", parentKey: \\Post.id, foreignKey: \\Extra.postID, target: \\Post.extra)
+                    }
+                    return nil
+                }
+            }
+
+            extension Post: Hangar.Table, Changesets.TableModel {
+            }
+            """,
+            macroSpecs: associationTestMacros
+        )
+    }
+
+    // MARK: Diagnostics (§4.3: the pairing is enforced both ways)
+
+    func testLoadableRequiresAssociationAttribute() {
+        assertMacroExpansion(
+            """
+            @Entity("posts")
+            struct Post: Sendable {
+                @ID let id: UUID
+                var comments: Loadable<[Comment]>
+            }
+            """,
+            expandedSource: """
+            struct Post: Sendable {
+                let id: UUID
+                var comments: Loadable<[Comment]>
+            }
+
+            extension Post: Hangar.Table, Changesets.TableModel {
+            }
+            """,
+            diagnostics: [
+                DiagnosticSpec(
+                    message: "A Loadable property needs an association attribute — mark it @HasMany, @BelongsTo, or @HasOne (§4.3).",
+                    line: 4, column: 5)
+            ],
+            macroSpecs: associationTestMacros
+        )
+    }
+
+    func testHasOneRequiresOptionalTarget() {
+        assertMacroExpansion(
+            """
+            @Entity("authors")
+            struct Author: Sendable {
+                @ID let id: UUID
+                @HasOne(foreignKey: \\Profile.authorID)
+                var profile: Loadable<Profile>
+            }
+            """,
+            expandedSource: """
+            struct Author: Sendable {
+                let id: UUID
+                var profile: Loadable<Profile>
+            }
+
+            extension Author: Hangar.Table, Changesets.TableModel {
+            }
+            """,
+            diagnostics: [
+                DiagnosticSpec(
+                    message: "@HasOne properties must be Loadable<Related?> — \"no related row\" is data, expressed as .loaded(nil).",
+                    line: 4, column: 5)
+            ],
+            macroSpecs: associationTestMacros
+        )
+    }
+
+    func testAssociationMustBeVar() {
+        assertMacroExpansion(
+            """
+            @Entity("posts")
+            struct Post: Sendable {
+                @ID let id: UUID
+                @HasMany(foreignKey: \\Comment.postID)
+                let comments: Loadable<[Comment]>
+            }
+            """,
+            expandedSource: """
+            struct Post: Sendable {
+                let id: UUID
+                let comments: Loadable<[Comment]>
+            }
+
+            extension Post: Hangar.Table, Changesets.TableModel {
+            }
+            """,
+            diagnostics: [
+                DiagnosticSpec(
+                    message: "@HasMany properties must be 'var' — preload assigns into them.",
+                    line: 4, column: 5)
+            ],
+            macroSpecs: associationTestMacros
+        )
+    }
+}
+
+private let associationTestMacros: [String: MacroSpec] = [
+    "Entity": MacroSpec(
+        type: EntityMacro.self, conformances: ["Hangar.Table", "Changesets.TableModel"]),
+    "ID": MacroSpec(type: IDMacro.self),
+    "HasMany": MacroSpec(type: HasManyMacro.self),
+    "BelongsTo": MacroSpec(type: BelongsToMacro.self),
+    "HasOne": MacroSpec(type: HasOneMacro.self),
+]
