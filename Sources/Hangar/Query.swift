@@ -15,6 +15,7 @@ public struct Query<Model: Table, Result: Sendable>: Sendable {
     var grouping: [SQLExpression] = []
     var having: Predicate?
     var isDistinct = false
+    var distinctOn: [SQLExpression] = []
     var rowLock: RowLock? = nil
     /// Installed by `.select {}`: the SELECT list plus the row
     /// decoder for `Result`. Nil means "whole model" — every schema column
@@ -35,6 +36,7 @@ public struct Query<Model: Table, Result: Sendable>: Sendable {
         next.grouping = grouping
         next.having = having
         next.isDistinct = isDistinct
+        next.distinctOn = distinctOn
         next.rowLock = rowLock
         next.selection = selection
         return next
@@ -77,6 +79,11 @@ extension Table {
 
     public static func groupBy<V>(_ build: (QueryColumns) -> Column<V>) -> Query<Self, Self> {
         all.groupBy(build)
+    }
+
+    /// `Self.distinct(on:)` — sugar for `all.distinct(on:)`.
+    public static func distinct<V>(on build: (QueryColumns) -> Column<V>) -> Query<Self, Self> {
+        all.distinct(on: build)
     }
 }
 
@@ -130,10 +137,34 @@ extension Query {
         return next
     }
 
-    /// SELECT DISTINCT. `distinctOn` arrives with the join pass.
+    /// `SELECT DISTINCT` — whole-row deduplication. Mutually exclusive
+    /// with ``distinct(on:)``; whichever was called last wins, the same
+    /// last-call-wins rule `limit` follows.
     public func distinct() -> Query<Model, Result> {
         var next = self
         next.isDistinct = true
+        next.distinctOn = []
+        return next
+    }
+
+    /// `SELECT DISTINCT ON (column, ...)` — one row per distinct value of
+    /// the named columns, chosen by the query's `ORDER BY`:
+    ///
+    /// ```swift
+    /// // The newest post per author:
+    /// Post.distinct(on: { $0.authorID })
+    ///     .order { $0.authorID.asc() }
+    ///     .order { $0.createdAt.desc() }
+    /// ```
+    ///
+    /// Postgres requires the `ORDER BY` to start with the `DISTINCT ON`
+    /// columns when both are present, and rejects the statement loudly when
+    /// it doesn't. Call again to add further columns; calling `distinct()`
+    /// afterwards replaces this, last call wins.
+    public func distinct<V>(on build: (Model.QueryColumns) -> Column<V>) -> Query<Model, Result> {
+        var next = self
+        next.distinctOn.append(build(Model.queryColumns).expression)
+        next.isDistinct = false
         return next
     }
 

@@ -58,9 +58,13 @@ enum SQLRenderer {
 
     /// The full SELECT statement text, appending binds to `writer` — the
     /// entry point subqueries reuse.
-    static func selectText<M, R>(_ query: Query<M, R>, writer: inout BindWriter) -> String {
+    static func selectText<M, R>(
+        _ query: Query<M, R>, writer: inout BindWriter, overrideList: String? = nil
+    ) -> String {
         let list: String
-        if let selection = query.selection {
+        if let overrideList {
+            list = overrideList
+        } else if let selection = query.selection {
             list = selection.items
                 .map { item in
                     let rendered = render(item.expression, writer: &writer)
@@ -70,7 +74,7 @@ enum SQLRenderer {
         } else {
             list = M.schema.selectList
         }
-        var sql = "SELECT \(query.isDistinct ? "DISTINCT " : "")\(list) FROM \(M.schema.quotedName)"
+        var sql = "SELECT \(distinctClause(query.isDistinct, query.distinctOn, writer: &writer))\(list) FROM \(M.schema.quotedName)"
         appendWhere(query.predicate, to: &sql, writer: &writer)
         if !query.grouping.isEmpty {
             let terms = query.grouping
@@ -107,7 +111,10 @@ enum SQLRenderer {
     static func count<M, R>(_ query: Query<M, R>) -> RenderedStatement {
         var writer = BindWriter()
         if changesWhatARowIs(query) {
-            let inner = selectText(countableSubquery(of: query), writer: &writer)
+            let stripped = countableSubquery(of: query)
+            let inner = selectText(
+                stripped, writer: &writer,
+                overrideList: countingList(for: stripped, writer: &writer))
             return RenderedStatement(
                 sql: "SELECT count(*) FROM (\(inner)) AS \(quote("hangar_count"))",
                 binds: writer.binds)
@@ -124,7 +131,10 @@ enum SQLRenderer {
     static func exists<M, R>(_ query: Query<M, R>) -> RenderedStatement {
         var writer = BindWriter()
         if changesWhatARowIs(query) {
-            let inner = selectText(countableSubquery(of: query), writer: &writer)
+            let stripped = countableSubquery(of: query)
+            let inner = selectText(
+                stripped, writer: &writer,
+                overrideList: countingList(for: stripped, writer: &writer))
             return RenderedStatement(sql: "SELECT EXISTS (\(inner))", binds: writer.binds)
         }
         var inner = "SELECT 1 FROM \(M.schema.quotedName)"
@@ -132,10 +142,38 @@ enum SQLRenderer {
         return RenderedStatement(sql: "SELECT EXISTS (\(inner))", binds: writer.binds)
     }
 
+    /// `""`, `"DISTINCT "`, or `"DISTINCT ON (...) "` — shared by every
+    /// select renderer.
+    static func distinctClause(
+        _ isDistinct: Bool, _ distinctOn: [SQLExpression], writer: inout BindWriter
+    ) -> String {
+        if !distinctOn.isEmpty {
+            let terms = distinctOn.map { render($0, writer: &writer) }.joined(separator: ", ")
+            return "DISTINCT ON (\(terms)) "
+        }
+        return isDistinct ? "DISTINCT " : ""
+    }
+
+    /// A valid inner select list for a counted subquery.
+    ///
+    /// A grouped query with no projection would otherwise render its full
+    /// column list, which Postgres rejects — columns outside the GROUP BY
+    /// cannot appear ungrouped. The grouping expressions themselves are the
+    /// honest list: one row per group is exactly what is being counted.
+    static func countingList<M, R>(
+        for query: Query<M, R>, writer: inout BindWriter
+    ) -> String? {
+        guard query.selection == nil, !query.grouping.isEmpty else { return nil }
+        return query.grouping
+            .map { render($0, writer: &writer) }
+            .joined(separator: ", ")
+    }
+
     /// Whether the query carries a clause that changes what a row is, and so
     /// changes what counting one means.
     private static func changesWhatARowIs<M, R>(_ query: Query<M, R>) -> Bool {
         !query.grouping.isEmpty || query.having != nil || query.isDistinct
+            || !query.distinctOn.isEmpty
     }
 
     /// The query stripped of clauses that cannot appear in a counted subquery
@@ -357,6 +395,8 @@ enum SQLRenderer {
             unsupported = "HAVING"
         } else if query.isDistinct {
             unsupported = "DISTINCT"
+        } else if !query.distinctOn.isEmpty {
+            unsupported = "DISTINCT ON"
         } else if let lock = query.rowLock {
             // DELETE and UPDATE already take their own row locks.
             unsupported = lock.rawValue

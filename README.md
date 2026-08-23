@@ -91,6 +91,25 @@ An unaliased self-join is refused with the remedy named — every column
 reference would be ambiguous — and composition closures after an aliased
 join see alias-qualified columns throughout.
 
+A third table joins on from any two-table join, the closure seeing all
+three column sets:
+
+```swift
+Post.join(Comment.self, on: { p, c in c.postID == p.id })
+    .join(Author.self, on: { _, comment, author in comment.authorID == author.id })
+    .select(into: Row.self) { p, c, a in (title: p.title, commenter: a.name) }
+```
+
+**`DISTINCT ON`** for one-row-per-group reads, with the same last-call-wins
+relationship to `.distinct()` that repeated `.limit` calls have:
+
+```swift
+// The newest post per author:
+Post.distinct(on: { $0.authorID })
+    .order { $0.authorID.asc() }
+    .order { $0.createdAt.desc() }
+```
+
 **Preloading** that batches rather than N+1 — one query per association, using
 `= ANY($1)`:
 
@@ -183,8 +202,9 @@ let repo = Repo(connection: connection)
 
 ## What is not here
 
-No migrations — use a migration tool. No CTEs, no `DISTINCT ON`, no
-three-table joins, and no `@HasMany(through:)`.
+No migrations — use a migration tool. No CTEs (`WITH ... AS`) — the one
+remaining query-shape gap, deferred to its own pass — and no
+`@HasMany(through:)` yet.
 
 ## Documentation
 

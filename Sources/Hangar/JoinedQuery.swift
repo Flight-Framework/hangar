@@ -36,6 +36,7 @@ public struct JoinedQuery<A: Table, B: Table, Result: Sendable>: Sendable {
     var rowLimit: Int? = nil
     var rowOffset: Int? = nil
     var isDistinct = false
+    var distinctOn: [SQLExpression] = []
     var rowLock: RowLock? = nil
     /// Preloads apply when `Result == A` (the base-entity path).
     var preloads: [PreloadStep<A>] = []
@@ -54,6 +55,7 @@ public struct JoinedQuery<A: Table, B: Table, Result: Sendable>: Sendable {
         next.rowLimit = rowLimit
         next.rowOffset = rowOffset
         next.isDistinct = isDistinct
+        next.distinctOn = distinctOn
         next.rowLock = rowLock
         next.selection = selection
         return next
@@ -217,6 +219,7 @@ extension Query {
         next.rowLimit = rowLimit
         next.rowOffset = rowOffset
         next.isDistinct = isDistinct
+        next.distinctOn = distinctOn
         // A lock composed before the join carries through — dropping it
         // silently would leave rows unlocked that the caller asked to lock.
         next.rowLock = rowLock
@@ -285,6 +288,18 @@ extension JoinedQuery {
     public func distinct() -> JoinedQuery<A, B, Result> {
         var next = self
         next.isDistinct = true
+        next.distinctOn = []
+        return next
+    }
+
+    /// `SELECT DISTINCT ON (...)` over the join — same contract as the
+    /// single-table form.
+    public func distinct<V>(
+        on build: (A.QueryColumns, B.QueryColumns) -> Column<V>
+    ) -> JoinedQuery<A, B, Result> {
+        var next = self
+        next.distinctOn.append(build(columnsA, columnsB).expression)
+        next.isDistinct = false
         return next
     }
 
@@ -391,9 +406,21 @@ extension SQLRenderer {
     static func select<A, B, R>(_ query: JoinedQuery<A, B, R>) throws -> RenderedStatement {
         var writer = BindWriter()
         writer.qualified = true
+        let sql = try selectText(query, writer: &writer)
+        return RenderedStatement(sql: sql, binds: writer.binds)
+    }
+
+    /// The full joined SELECT text — the entry point the count/exists
+    /// subquery wrap reuses. `overrideList` substitutes the select list;
+    /// see `countingList(for:)`.
+    static func selectText<A, B, R>(
+        _ query: JoinedQuery<A, B, R>, writer: inout BindWriter, overrideList: String? = nil
+    ) throws -> String {
         let from = try joinFromClause(query, writer: &writer)
         let list: String
-        if let selection = query.selection {
+        if let overrideList {
+            list = overrideList
+        } else if let selection = query.selection {
             list = selection.items
                 .map { item in
                     let rendered = SQLRenderer.render(item.expression, writer: &writer)
@@ -407,7 +434,7 @@ extension SQLRenderer {
         } else {
             list = A.schema.qualifiedSelectList
         }
-        var sql = "SELECT \(query.isDistinct ? "DISTINCT " : "")\(list)"
+        var sql = "SELECT \(distinctClause(query.isDistinct, query.distinctOn, writer: &writer))\(list)"
         sql += " \(from)"
         SQLRenderer.appendWhere(query.predicate, to: &sql, writer: &writer)
         if !query.grouping.isEmpty {
@@ -428,7 +455,71 @@ extension SQLRenderer {
         // Postgres itself rejects the invalid combinations loudly (FOR
         // UPDATE on the nullable side of an outer join, with GROUP BY...).
         if let lock = query.rowLock { sql += " \(lock.rawValue)" }
+        return sql
+    }
+
+    /// `SELECT count(*)` over the joined query, honoring the same clause
+    /// rules as the single-table form: grouping, having, and both distinct
+    /// forms change what a row is, so their presence counts through a
+    /// subquery. With a one-to-many join and none of those, this counts
+    /// matches, not distinct base rows — `.distinct()` when base rows are
+    /// what you mean.
+    static func count<A, B, R>(_ query: JoinedQuery<A, B, R>) throws -> RenderedStatement {
+        var writer = BindWriter()
+        writer.qualified = true
+        if joinedChangesWhatARowIs(query) {
+            let stripped = countable(query)
+            let inner = try selectText(
+                stripped, writer: &writer,
+                overrideList: joinedCountingList(stripped, writer: &writer))
+            return RenderedStatement(
+                sql: "SELECT count(*) FROM (\(inner)) AS \(quote("hangar_count"))",
+                binds: writer.binds)
+        }
+        var sql = "SELECT count(*) \(try joinFromClause(query, writer: &writer))"
+        SQLRenderer.appendWhere(query.predicate, to: &sql, writer: &writer)
         return RenderedStatement(sql: sql, binds: writer.binds)
+    }
+
+    /// `SELECT EXISTS (...)` over the joined query — same clause rules as
+    /// ``count(_:)-``; a HAVING can empty an otherwise-matching set.
+    static func exists<A, B, R>(_ query: JoinedQuery<A, B, R>) throws -> RenderedStatement {
+        var writer = BindWriter()
+        writer.qualified = true
+        if joinedChangesWhatARowIs(query) {
+            let stripped = countable(query)
+            let inner = try selectText(
+                stripped, writer: &writer,
+                overrideList: joinedCountingList(stripped, writer: &writer))
+            return RenderedStatement(sql: "SELECT EXISTS (\(inner))", binds: writer.binds)
+        }
+        var inner = "SELECT 1 \(try joinFromClause(query, writer: &writer))"
+        SQLRenderer.appendWhere(query.predicate, to: &inner, writer: &writer)
+        return RenderedStatement(sql: "SELECT EXISTS (\(inner))", binds: writer.binds)
+    }
+
+    private static func joinedChangesWhatARowIs<A, B, R>(_ query: JoinedQuery<A, B, R>) -> Bool {
+        !query.grouping.isEmpty || query.having != nil || query.isDistinct
+            || !query.distinctOn.isEmpty
+    }
+
+    private static func countable<A, B, R>(_ query: JoinedQuery<A, B, R>) -> JoinedQuery<A, B, R> {
+        var stripped = query
+        stripped.orderings = []
+        stripped.rowLimit = nil
+        stripped.rowOffset = nil
+        stripped.preloads = []
+        stripped.rowLock = nil
+        return stripped
+    }
+
+    private static func joinedCountingList<A, B, R>(
+        _ query: JoinedQuery<A, B, R>, writer: inout BindWriter
+    ) -> String? {
+        guard query.selection == nil, !query.grouping.isEmpty else { return nil }
+        return query.grouping
+            .map { SQLRenderer.render($0, writer: &writer) }
+            .joined(separator: ", ")
     }
 }
 
@@ -482,20 +573,27 @@ extension Repo {
         return results.first
     }
 
-    /// How many joined rows match — note that with a one-to-many join this
-    /// counts matches, not distinct base rows.
+    /// How many joined rows match. Grouping, having, and distinct count
+    /// through a subquery, exactly as the single-table `count` does; with a
+    /// one-to-many join and none of those, this counts matches, not
+    /// distinct base rows.
     public func count<A, B, R>(_ query: JoinedQuery<A, B, R>) async throws -> Int {
-        var writer = BindWriter()
-        writer.qualified = true
-        var sql = "SELECT count(*) \(try SQLRenderer.joinFromClause(query, writer: &writer))"
-        if let predicate = query.predicate {
-            sql += " WHERE \(SQLRenderer.render(predicate.expression, writer: &writer))"
-        }
-        let statement = RenderedStatement(sql: sql, binds: writer.binds)
+        let statement = try SQLRenderer.count(query)
         let sequence = try await execute(statement.postgresQuery(), intent: .read, operation: "count")
         for try await row in sequence {
             let cells = row.makeRandomAccess()
             return try _decodeColumn(Int.self, from: cells[0], table: A.schema.name, column: "count")
+        }
+        throw HangarError.columnCountMismatch(table: A.schema.name, expected: 1, got: 0)
+    }
+
+    /// Whether any joined row matches — same clause rules as `count`.
+    public func exists<A, B, R>(_ query: JoinedQuery<A, B, R>) async throws -> Bool {
+        let statement = try SQLRenderer.exists(query)
+        let sequence = try await execute(statement.postgresQuery(), intent: .read, operation: "exists")
+        for try await row in sequence {
+            let cells = row.makeRandomAccess()
+            return try _decodeColumn(Bool.self, from: cells[0], table: A.schema.name, column: "exists")
         }
         throw HangarError.columnCountMismatch(table: A.schema.name, expected: 1, got: 0)
     }

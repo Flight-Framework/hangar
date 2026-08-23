@@ -8,6 +8,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Three-table joins.** `.join`/`.leftJoin` on any two-table join adds a
+  third table, the on-closure and every later composition closure seeing all
+  three column sets. Aliases work on any side, the ambiguity guard extends
+  three ways, projections and preloads carry through, and `count`/`exists`
+  follow the same clause rules as everywhere else. Ordinary generics, not a
+  parameter-pack generalization: a compile spike confirmed a stored pack
+  cannot be re-expanded into the on-closure call in this Swift version, so
+  the pack form would compromise exactly the ergonomics that matter.
+- **`DISTINCT ON`.** `distinct(on: { $0.authorID })` on single-table and
+  joined queries alike — the "newest row per group" shape. Last-call-wins
+  with `.distinct()`, counted through a subquery, refused by bulk writes.
+- **`exists` for joined queries**, which had `count` but no `exists`.
 - **Self-joins, via table aliases.** `Post.alias("parent").join(Post.alias("child"), on: ...)`
   renders `FROM "posts" AS "parent" JOIN "posts" AS "child"`, with every
   column reference — in the ON condition, later `.where`/`.order`/`.groupBy`
@@ -75,6 +87,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   join previously rendered a bare `"title"` — ambiguous at best, silently
   resolved to the wrong table at worst. Qualification is now decided at
   render time, exactly as for columns outside fragments.
+
+### Fixed
+
+- **Joined `count` honored none of GROUP BY / HAVING / DISTINCT.** The
+  single-table `count` was fixed in the last pass; the joined one still
+  hand-rolled its SQL and ignored all three. Both now share the same rule:
+  clauses that change what a row is count through a subquery.
+- **`count` over a grouped, unprojected query now emits valid SQL.** It
+  used to render the full column list inside the subquery — which Postgres
+  rejects, since ungrouped columns can't appear — so the count that should
+  have said "2 groups" said "ERROR". The grouping expressions themselves
+  are the inner select list now: one row per group is exactly what is being
+  counted.
 
 ### Fixed — silent wrong answers
 
