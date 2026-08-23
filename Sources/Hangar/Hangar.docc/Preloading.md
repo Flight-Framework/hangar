@@ -40,12 +40,19 @@ but does mean three associations are three round trips.
 
 ```swift
 for post in posts {
-    let author = try post.author.require()      // throws if not preloaded
+    let author = try post.author.get()          // throws if not preloaded
 }
 ```
 
 ``Loadable/isLoaded`` asks without throwing, when the answer is genuinely
-optional.
+optional, and ``Loadable/optional`` hands back `nil` instead of throwing.
+
+Encoding is provided: a loaded association encodes as its value, an unloaded
+one as `null`, so a preloaded model can be serialized without a hand-written
+mirror type. There is deliberately no matching `Decodable` — on the wire
+`null` cannot separate "not fetched" from "fetched, and there is genuinely
+nothing there", and a decoder would have to guess. Models go *out* of an
+application as JSON; what comes back *in* is a request type of its own.
 
 ## Why it throws
 
@@ -67,6 +74,47 @@ Post.all.preload(\.comments) { comments in
     comments.where { $0.approved == true }.order { $0.createdAt.asc() }
 }
 ```
+
+## Optional relationships
+
+A foreign key that may be NULL is an ordinary relationship, on both sides.
+
+On the child side, a nullable key pairs with an optional `Loadable`, and
+`.loaded(nil)` is a real answer — "preloaded, and there is genuinely nothing
+there" — distinct from `.notLoaded`:
+
+```swift
+@Column("authorID") var authorID: UUID?
+
+@BelongsTo(foreignKey: \Message.authorID)
+var author: Loadable<User?>
+```
+
+On the parent side, nothing changes at the declaration:
+
+```swift
+@HasMany(foreignKey: \Message.authorID)
+var authored: Loadable<[Message]>
+```
+
+The keypath's type is what selects the loader, so `@HasMany` over a nullable
+key needs no different spelling. Children whose key is NULL belong to no
+parent and appear under none; the query still binds only non-null parent
+keys, so `= ANY($1)` never has to reason about NULL.
+
+The same asymmetry shows up in join conditions, where a nullable column can
+be compared against a non-null one directly:
+
+```swift
+Message.leftJoin(User.self, on: { message, user in message.authorID == user.id })
+```
+
+Swift will not unify `Column<UUID?>` with `Column<UUID>` on its own, so
+Hangar supplies the mixed comparison. SQL draws no such distinction: `=`
+against NULL yields NULL, which a `JOIN` or `WHERE` reads as "no match" —
+exactly what an optional relationship means. A `leftJoin` then keeps the
+unmatched rows, which is usually the point; an inner join here would drop
+them silently.
 
 ## Many-to-many, through a join table
 

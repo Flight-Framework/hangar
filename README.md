@@ -125,8 +125,17 @@ queries, never a SQL join:
 var tags: Loadable<[Tag]>
 ```
 
+A nullable foreign key is an ordinary relationship: `@HasMany` over one needs
+no different spelling (children whose key is NULL belong to no parent), and
+the child side pairs it with an optional `Loadable`, where `.loaded(nil)`
+means "preloaded, and there is genuinely no author" — a different fact from
+`.notLoaded`.
+
 An association that was never preloaded throws `notPreloaded` rather than
-silently returning nothing. Loud beats empty.
+silently returning nothing. Loud beats empty. A preloaded model encodes to
+JSON as-is (unloaded associations become `null`); there is deliberately no
+`Decodable`, since `null` on the wire cannot separate "not fetched" from
+"fetched, and empty".
 
 **Transactions** with real savepoint nesting, isolation levels, and
 retry-on-serialization-failure:

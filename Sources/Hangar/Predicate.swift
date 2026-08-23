@@ -131,6 +131,33 @@ public func != <V: ColumnCodable & Equatable>(lhs: Column<V>, rhs: Column<V>) ->
     Predicate(expression: .infix("<>", lhs.expression, rhs.expression))
 }
 
+// A nullable foreign key joined against a non-null primary key is the
+// ordinary shape for an optional relationship (`reply.parentID == root.id`),
+// and Swift will not unify `Column<V?>` with `Column<V>` on its own. SQL has
+// no such distinction — `=` on a NULL yields NULL, which a JOIN or WHERE
+// treats as "no match", exactly the intended reading.
+
+/// Equality between a nullable column and a non-null one. A NULL on the
+/// left never matches, which is what an optional relationship means.
+public func == <V: ColumnCodable & Equatable>(lhs: Column<V?>, rhs: Column<V>) -> Predicate {
+    Predicate(expression: .infix("=", lhs.expression, rhs.expression))
+}
+
+/// Equality between a non-null column and a nullable one.
+public func == <V: ColumnCodable & Equatable>(lhs: Column<V>, rhs: Column<V?>) -> Predicate {
+    Predicate(expression: .infix("=", lhs.expression, rhs.expression))
+}
+
+/// Inequality between a nullable column and a non-null one.
+public func != <V: ColumnCodable & Equatable>(lhs: Column<V?>, rhs: Column<V>) -> Predicate {
+    Predicate(expression: .infix("<>", lhs.expression, rhs.expression))
+}
+
+/// Inequality between a non-null column and a nullable one.
+public func != <V: ColumnCodable & Equatable>(lhs: Column<V>, rhs: Column<V?>) -> Predicate {
+    Predicate(expression: .infix("<>", lhs.expression, rhs.expression))
+}
+
 // MARK: - Membership
 
 extension Column where Value: ColumnCodable & PostgresArrayEncodable {

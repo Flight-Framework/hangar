@@ -49,3 +49,25 @@ public enum Loadable<T: Sendable>: Sendable {
 }
 
 extension Loadable: Equatable where T: Equatable {}
+
+/// JSON encoding, so a preloaded model can be serialized without a
+/// hand-written mirror type: a loaded association encodes as its value, an
+/// unloaded one as `null`.
+///
+/// **Encoding only, deliberately.** There is no matching `Decodable`: on the
+/// wire `null` cannot distinguish "not fetched" from "fetched, and there is
+/// genuinely nothing there" — the very distinction this type exists to keep.
+/// A decoder would have to guess, and guessing wrong reintroduces the
+/// conflated nil by the back door. Models come *out* of an application as
+/// JSON; what comes *in* is a request type of its own.
+extension Loadable: Encodable where T: Encodable {
+    public func encode(to encoder: any Encoder) throws {
+        var container = encoder.singleValueContainer()
+        switch self {
+        case .loaded(let value):
+            try container.encode(value)
+        case .notLoaded:
+            try container.encodeNil()
+        }
+    }
+}

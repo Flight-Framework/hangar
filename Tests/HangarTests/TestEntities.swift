@@ -56,6 +56,11 @@ struct Author: Sendable, Equatable {
 
     @HasMany(foreignKey: \Post.authorID)
     var posts: Loadable<[Post]>
+
+    // Has-many over a NULLABLE foreign key: a comment may have no moderator
+    // at all. Those rows belong to no author and appear under none.
+    @HasMany(foreignKey: \Comment.moderatorID)
+    var moderated: Loadable<[Comment]>
 }
 
 @Entity("hangar_comments")

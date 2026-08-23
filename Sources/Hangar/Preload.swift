@@ -87,6 +87,33 @@ public func _hasMany<Parent: Table, Child: Table, Key: PreloadKey>(
     }
 }
 
+/// Factory for `@HasMany` over a **nullable** foreign key — the child
+/// column may be NULL, meaning "belongs to no parent". Those children
+/// simply appear under no parent; the query still binds non-null parent
+/// keys, so `= ANY($1)` never has to reason about NULL.
+///
+/// Selected by ordinary overload resolution: the generated registry entry
+/// is identical either way, and the keypath's type decides which factory it
+/// lands on.
+public func _hasMany<Parent: Table, Child: Table, Key: PreloadKey>(
+    name: String,
+    parentKey: KeyPath<Parent, Key> & Sendable,
+    foreignKey: KeyPath<Child, Key?> & Sendable,
+    target: WritableKeyPath<Parent, Loadable<[Child]>> & Sendable
+) -> _HasManyLoader<Parent, Child> {
+    _HasManyLoader(name: name) { parents, repo, tune in
+        guard !parents.isEmpty else { return }
+        let keys = Array(Set(parents.map { $0[keyPath: parentKey] }))
+        let children = try await repo.all(
+            filtered(tune(Child.all), by: foreignKey, in: keys, association: name))
+        let grouped = Dictionary(grouping: children) { $0[keyPath: foreignKey] }
+        for index in parents.indices {
+            let key = parents[index][keyPath: parentKey]
+            parents[index][keyPath: target] = .loaded(grouped[key] ?? [])
+        }
+    }
+}
+
 /// Factory for `@BelongsTo`'s generated registry entry. A non-nil
 /// foreign key that matches no row throws `danglingBelongsTo`.
 public func _belongsTo<Parent: Table, Child: Table, Key: PreloadKey>(
@@ -175,7 +202,7 @@ public func _hasOne<Parent: Table, Child: Table, Key: PreloadKey>(
 /// at expansion time.
 private func filtered<Child: Table, Key: PreloadKey>(
     _ query: Query<Child, Child>,
-    by keyPath: KeyPath<Child, Key> & Sendable,
+    by keyPath: AnyKeyPath,
     in keys: [Key],
     association: String
 ) throws -> Query<Child, Child> {
