@@ -28,6 +28,18 @@ public struct _HasManyLoader<Parent: Table, Child: Table>: Sendable {
     ) async throws -> Void
 }
 
+/// The loader behind `@HasMany(through:from:to:)` — deliberately not
+/// parameterized on the join table, so `.preload` call sites dispatch on
+/// exactly the types they can see.
+public struct _HasManyThroughLoader<Parent: Table, Child: Table>: Sendable {
+    let name: String
+    let run: @Sendable (
+        _ parents: inout [Parent],
+        _ repo: Repo,
+        _ tune: @escaping @Sendable (Query<Child, Child>) -> Query<Child, Child>
+    ) async throws -> Void
+}
+
 /// `@BelongsTo` with a non-optional foreign key: every parent must find its
 /// row; a dangling reference throws rather than lying with `.notLoaded`.
 public struct _ToOneLoader<Parent: Table, Child: Table>: Sendable {
@@ -174,6 +186,64 @@ private func filtered<Child: Table, Key: PreloadKey>(
     return next
 }
 
+/// Factory for `@HasMany(through:from:to:)`'s generated registry entry.
+///
+/// Two batched queries, never a SQL join — the same shape as every other
+/// preload: join-table rows filtered by `throughFrom = ANY(parentKeys)`,
+/// then related rows filtered by `childKey = ANY(collected to-keys)`, then
+/// in-memory reassembly. Per-parent ordering honors the tuned child query's
+/// own order. Duplicate join rows yield duplicate children — the honest
+/// reflection of the data — and a join row referencing a vanished child is
+/// skipped, matching the direct has-many's inner-join semantics.
+public func _hasManyThrough<
+    Parent: Table, Through: Table, Child: Table,
+    ParentKey: PreloadKey, ChildKey: PreloadKey
+>(
+    name: String,
+    parentKey: KeyPath<Parent, ParentKey> & Sendable,
+    throughFrom: KeyPath<Through, ParentKey> & Sendable,
+    throughTo: KeyPath<Through, ChildKey> & Sendable,
+    childKey: KeyPath<Child, ChildKey> & Sendable,
+    target: WritableKeyPath<Parent, Loadable<[Child]>> & Sendable
+) -> _HasManyThroughLoader<Parent, Child> {
+    _HasManyThroughLoader(name: name) { parents, repo, tune in
+        guard !parents.isEmpty else { return }
+        let parentKeys = Array(Set(parents.map { $0[keyPath: parentKey] }))
+        let throughRows = try await repo.all(
+            filtered(Through.all, by: throughFrom, in: parentKeys, association: name))
+
+        let childKeys = Array(Set(throughRows.map { $0[keyPath: throughTo] }))
+        let children: [Child] = childKeys.isEmpty
+            ? []
+            : try await repo.all(
+                filtered(tune(Child.all), by: childKey, in: childKeys, association: name))
+
+        let childByKey = Dictionary(
+            children.map { ($0[keyPath: childKey], $0) },
+            uniquingKeysWith: { first, _ in first })
+        // The tuned child query's own order, applied per parent.
+        let orderIndex = Dictionary(
+            children.enumerated().map { ($1[keyPath: childKey], $0) },
+            uniquingKeysWith: { first, _ in first })
+        var keysByParent: [ParentKey: [ChildKey]] = [:]
+        for row in throughRows {
+            keysByParent[row[keyPath: throughFrom], default: []]
+                .append(row[keyPath: throughTo])
+        }
+
+        for index in parents.indices {
+            let key = parents[index][keyPath: parentKey]
+            let related = (keysByParent[key] ?? [])
+                .compactMap { childByKey[$0] }
+                .sorted {
+                    (orderIndex[$0[keyPath: childKey]] ?? .max)
+                        < (orderIndex[$1[keyPath: childKey]] ?? .max)
+                }
+            parents[index][keyPath: target] = .loaded(related)
+        }
+    }
+}
+
 // MARK: - Query surface
 
 /// One pending preload on a query — everything about the association is
@@ -195,9 +265,22 @@ extension Query {
         _ association: WritableKeyPath<Model, Loadable<[Child]>> & Sendable,
         _ nested: @escaping @Sendable (Query<Child, Child>) -> Query<Child, Child> = { $0 }
     ) -> Query<Model, Result> {
-        appendingPreload(association) { (loader: _HasManyLoader<Model, Child>, parents, repo) in
-            try await loader.run(&parents, repo, nested)
-        }
+        // Direct and through has-many associations share the call-site
+        // shape, so the caller never needs to know which one this is.
+        var next = self
+        next.preloads.append(
+            PreloadStep { parents, repo in
+                let erased = Model._association(for: association)
+                if let loader = erased as? _HasManyLoader<Model, Child> {
+                    try await loader.run(&parents, repo, nested)
+                } else if let loader = erased as? _HasManyThroughLoader<Model, Child> {
+                    try await loader.run(&parents, repo, nested)
+                } else {
+                    throw HangarError.unknownAssociation(
+                        table: Model.schema.name, association: "\(association)")
+                }
+            })
+        return next
     }
 
     /// Preloads a `@BelongsTo` association with a non-optional foreign key.

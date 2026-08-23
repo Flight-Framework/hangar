@@ -33,9 +33,13 @@ struct EntityAssociation {
     /// The related entity's type name, unwrapped (`Comment`, `User`).
     let relatedTypeText: String
     /// The `foreignKey:` keypath expression, verbatim (`\Comment.postID`).
-    let foreignKeyText: String
+    /// Direct associations only; nil for a through association.
+    let foreignKeyText: String?
     /// `@BelongsTo(references:)` if given; defaults to `\Related.id`.
     let referencesText: String?
+    /// `@HasMany(through:from:to:)` — the join table's type name and its
+    /// two keypath expressions, verbatim. Nil for direct associations.
+    let throughText: (table: String, from: String, to: String)?
 }
 
 /// One stored property of an `@Entity` struct, as the macro understands it.
@@ -281,24 +285,63 @@ private func parseAssociation(
         }
     case .belongsTo:
         // Loadable<Child> (non-null FK) or Loadable<Child?> (nullable FK).
-        relatedTypeText = (argument.as(OptionalTypeSyntax.self)?.wrappedType ?? argument).trimmedDescription
+        // An array argument is a has-many shape wearing the wrong attribute;
+        // without this check it escapes into the expansion as uncompilable
+        // generated code with a baffling error at the generated line.
+        let unwrapped = argument.as(OptionalTypeSyntax.self)?.wrappedType ?? argument
+        if unwrapped.is(ArrayTypeSyntax.self) {
+            context.diagnoseError(
+                "entity.belongstotype",
+                "@BelongsTo properties must be Loadable<Related> (non-null foreign key) or Loadable<Related?> (nullable) — for a collection, use @HasMany.",
+                at: variable)
+            relatedTypeText = nil
+        } else {
+            relatedTypeText = unwrapped.trimmedDescription
+        }
     }
     guard let relatedTypeText else { return nil }
 
-    guard
-        let arguments = attribute.arguments?.as(LabeledExprListSyntax.self),
-        let foreignKey = arguments.first(where: { $0.label?.text == "foreignKey" })?
-            .expression.trimmedDescription
-    else {
+    let arguments = attribute.arguments?.as(LabeledExprListSyntax.self)
+    func labeledArgument(_ label: String) -> String? {
+        arguments?.first(where: { $0.label?.text == label })?.expression.trimmedDescription
+    }
+
+    if let throughExpression = labeledArgument("through") {
+        guard kind == .hasMany else {
+            context.diagnoseError(
+                "entity.throughkind",
+                "through: is @HasMany-only — @\(kind.rawValue) is a single-hop association.",
+                at: attribute)
+            return nil
+        }
+        guard let from = labeledArgument("from"), let to = labeledArgument("to") else {
+            context.diagnoseError(
+                "entity.throughkeys",
+                "@HasMany(through:) needs from: and to: keypaths on the join table — from: references this entity's key, to: the related entity's.",
+                at: attribute)
+            return nil
+        }
+        // `PostTag.self` → `PostTag`.
+        let throughType = throughExpression.hasSuffix(".self")
+            ? String(throughExpression.dropLast(5))
+            : throughExpression
+        return EntityAssociation(
+            identifier: identifier,
+            typeText: type.trimmedDescription,
+            kind: kind,
+            relatedTypeText: relatedTypeText,
+            foreignKeyText: nil,
+            referencesText: nil,
+            throughText: (table: throughType, from: from, to: to))
+    }
+
+    guard let foreignKey = labeledArgument("foreignKey") else {
         context.diagnoseError(
             "entity.associationkey",
             "@\(kind.rawValue) needs a foreignKey: keypath argument.",
             at: attribute)
         return nil
     }
-    let references = attribute.arguments?.as(LabeledExprListSyntax.self)?
-        .first(where: { $0.label?.text == "references" })?
-        .expression.trimmedDescription
 
     return EntityAssociation(
         identifier: identifier,
@@ -306,7 +349,8 @@ private func parseAssociation(
         kind: kind,
         relatedTypeText: relatedTypeText,
         foreignKeyText: foreignKey,
-        referencesText: references)
+        referencesText: labeledArgument("references"),
+        throughText: nil)
 }
 
 /// The first unlabeled argument of an attribute, if it is a plain string

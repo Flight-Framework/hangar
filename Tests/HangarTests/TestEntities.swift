@@ -124,3 +124,26 @@ struct Tagged: Sendable, Equatable {
     var labels: [String]
     var scores: [Int]
 }
+
+// Many-to-many fixtures: posts tagged through a join table.
+@Entity("hangar_tags")
+struct Tag: Sendable, Equatable {
+    @ID let id: UUID
+    var label: String
+}
+
+@Entity("hangar_post_tags")
+struct PostTag: Sendable, Equatable {
+    @ID let id: UUID
+    var postID: UUID
+    var tagID: UUID
+}
+
+@Entity("hangar_tagged_posts")
+struct TaggedPost: Sendable, Equatable {
+    @ID let id: UUID
+    var title: String
+
+    @HasMany(through: PostTag.self, from: \PostTag.postID, to: \PostTag.tagID)
+    var tags: Loadable<[Tag]>
+}

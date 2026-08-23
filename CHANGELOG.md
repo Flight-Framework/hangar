@@ -8,6 +8,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`@HasMany(through:)`** — many-to-many through a join table.
+  `@HasMany(through: PostTag.self, from: \PostTag.postID, to: \PostTag.tagID)`
+  preloads with two batched queries (join table, then related table), never a
+  SQL join — the same shape as every other preload. The related key follows
+  the `\Related.id` convention `@BelongsTo`'s `references` default already
+  set. Per-parent ordering honors the tuned child query; duplicate join rows
+  yield duplicate children; a join row referencing a vanished child is
+  skipped, matching direct has-many's inner-join semantics. `.preload(\.tags)`
+  is identical at the call site whichever kind the association is.
+- **Two macro diagnostics that were silent failures.** `@BelongsTo` with an
+  array argument (a has-many shape wearing the wrong attribute) used to
+  escape into the expansion as uncompilable generated code with a baffling
+  error; it now diagnoses at the property (`entity.belongstotype`). And
+  `through:` on `@BelongsTo`/`@HasOne` diagnoses as `@HasMany`-only
+  (`entity.throughkind`); missing `from:`/`to:` diagnoses `entity.throughkeys`.
 - **Three-table joins.** `.join`/`.leftJoin` on any two-table join adds a
   third table, the on-closure and every later composition closure seeing all
   three column sets. Aliases work on any side, the ambiguity guard extends

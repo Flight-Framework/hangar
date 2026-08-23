@@ -249,14 +249,23 @@ public struct EntityMacro: MemberMacro, ExtensionMacro {
             .map { association in
                 let target = "\\\(typeName).\(association.identifier)"
                 let loader: String
-                switch association.kind {
-                case .hasMany:
-                    loader = "Hangar._hasMany(name: \"\(association.identifier)\", parentKey: \\\(typeName).\(primaryKey), foreignKey: \(association.foreignKeyText), target: \(target))"
-                case .hasOne:
-                    loader = "Hangar._hasOne(name: \"\(association.identifier)\", parentKey: \\\(typeName).\(primaryKey), foreignKey: \(association.foreignKeyText), target: \(target))"
-                case .belongsTo:
-                    let references = association.referencesText ?? "\\\(association.relatedTypeText).id"
-                    loader = "Hangar._belongsTo(name: \"\(association.identifier)\", foreignKey: \(association.foreignKeyText), references: \(references), target: \(target))"
+                if let through = association.throughText {
+                    // childKey follows the same convention belongs-to's
+                    // `references` default does: the related type's `id`.
+                    loader = "Hangar._hasManyThrough(name: \"\(association.identifier)\", parentKey: \\\(typeName).\(primaryKey), throughFrom: \(through.from), throughTo: \(through.to), childKey: \\\(association.relatedTypeText).id, target: \(target))"
+                } else {
+                    // Direct associations always carry a foreignKey — the parser
+                    // guarantees it.
+                    let foreignKey = association.foreignKeyText!
+                    switch association.kind {
+                    case .hasMany:
+                        loader = "Hangar._hasMany(name: \"\(association.identifier)\", parentKey: \\\(typeName).\(primaryKey), foreignKey: \(foreignKey), target: \(target))"
+                    case .hasOne:
+                        loader = "Hangar._hasOne(name: \"\(association.identifier)\", parentKey: \\\(typeName).\(primaryKey), foreignKey: \(foreignKey), target: \(target))"
+                    case .belongsTo:
+                        let references = association.referencesText ?? "\\\(association.relatedTypeText).id"
+                        loader = "Hangar._belongsTo(name: \"\(association.identifier)\", foreignKey: \(foreignKey), references: \(references), target: \(target))"
+                    }
                 }
                 return "    if keyPath == \(target) {\n        return \(loader)\n    }"
             }

@@ -945,3 +945,95 @@ private let associationTestMacros: [String: MacroSpec] = [
     "BelongsTo": MacroSpec(type: BelongsToMacro.self),
     "HasOne": MacroSpec(type: HasOneMacro.self),
 ]
+
+final class ThroughAssociationFixtureTests: XCTestCase {
+    func testThroughExpansion() {
+        // The registry branch for @HasMany(through:) — childKey follows the
+        // related type's `id` by convention, exactly as @BelongsTo's
+        // `references` default does.
+        assertMacroExpansion(
+            """
+            @Entity("posts")
+            struct Post: Sendable {
+                @ID let id: UUID
+                @HasMany(through: PostTag.self, from: \\PostTag.postID, to: \\PostTag.tagID)
+                var tags: Loadable<[Tag]>
+            }
+            """,
+            expandedSource: """
+            struct Post: Sendable {
+                let id: UUID
+                @HasMany(through: PostTag.self, from: \\PostTag.postID, to: \\PostTag.tagID)
+                var tags: Loadable<[Tag]>
+
+                struct Columns: Hangar.AliasableColumns {
+                    let id: Hangar.Column<UUID>
+                    init() {
+                        self.init(table: "posts")
+                    }
+                    init(table: String) {
+                        self.id = Hangar.Column<UUID>("id", table: table)
+                    }
+                }
+
+                static let queryColumns = Columns()
+
+                static let schema = Hangar.TableSchema(
+                    name: "posts",
+                    columns: [
+                        Hangar.ColumnDefinition(name: "id", isPrimaryKey: true, isGenerated: false),
+                    ]
+                )
+
+                static let tableName = "posts"
+
+                static let columns: [Changesets.TableColumn<Post>] = [
+                    Changesets.TableColumn("id", \\Post.id, primaryKey: true),
+                ]
+
+                init(id: UUID, tags: Loadable<[Tag]> = .notLoaded(association: "tags")) {
+                    self.id = id
+                    self.tags = tags
+                }
+
+                init(from row: PostgresRow) throws {
+                    let cells = row.makeRandomAccess()
+                    try Hangar._checkColumnCount(cells.count, expected: 1, table: "posts")
+                    self.id = try Hangar._decodeColumn(UUID.self, from: cells[0], table: "posts", column: "id")
+                    self.tags = .notLoaded(association: "tags")
+                }
+
+                func _bind(for column: String) -> Hangar.SQLBind? {
+                    switch column {
+                    case "id":
+                        return Hangar.SQLBind(self.id)
+                    default:
+                        return nil
+                    }
+                }
+
+                static func _changesetBind(column: String, value: any Sendable) -> Hangar.SQLBind? {
+                    switch column {
+                    case "id":
+                        return (value as? UUID).map {
+                            Hangar.SQLBind($0)
+                        }
+                    default:
+                        return nil
+                    }
+                }
+
+                static func _association(for keyPath: AnyKeyPath) -> (any Sendable)? {
+                    if keyPath == \\Post.tags {
+                        return Hangar._hasManyThrough(name: "tags", parentKey: \\Post.id, throughFrom: \\PostTag.postID, throughTo: \\PostTag.tagID, childKey: \\Tag.id, target: \\Post.tags)
+                    }
+                    return nil
+                }
+            }
+
+            extension Post: Hangar.Table, Changesets.TableModel {
+            }
+            """,
+            macroSpecs: testMacros)
+    }
+}

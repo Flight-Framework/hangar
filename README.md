@@ -117,6 +117,14 @@ Post.distinct(on: { $0.authorID })
 try await repo.all(Post.all.preload(\.author).preload(\.comments))
 ```
 
+Many-to-many goes through a join table, loaded the same batched way — two
+queries, never a SQL join:
+
+```swift
+@HasMany(through: PostTag.self, from: \PostTag.postID, to: \PostTag.tagID)
+var tags: Loadable<[Tag]>
+```
+
 An association that was never preloaded throws `notPreloaded` rather than
 silently returning nothing. Loud beats empty.
 
@@ -203,8 +211,7 @@ let repo = Repo(connection: connection)
 ## What is not here
 
 No migrations — use a migration tool. No CTEs (`WITH ... AS`) — the one
-remaining query-shape gap, deferred to its own pass — and no
-`@HasMany(through:)` yet.
+remaining query-shape gap, deferred to its own pass.
 
 ## Documentation
 

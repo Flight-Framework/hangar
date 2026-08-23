@@ -59,6 +59,22 @@ public macro JSONB() =
 public macro HasMany(foreignKey: AnyKeyPath) =
     #externalMacro(module: "HangarMacrosImpl", type: "HasManyMacro")
 
+/// A many-to-many association loaded through a join table:
+///
+/// ```swift
+/// @HasMany(through: PostTag.self, from: \PostTag.postID, to: \PostTag.tagID)
+/// var tags: Loadable<[Tag]> = .notLoaded(association: "tags")
+/// ```
+///
+/// `through` is the join table's entity; `from` is its column referencing
+/// *this* entity's primary key; `to` is its column referencing the related
+/// entity's primary key. Preloading issues two batched queries — one
+/// against the join table, one against the related table — never a SQL
+/// join, exactly like every other preload.
+@attached(peer)
+public macro HasMany(through: Any.Type, from: AnyKeyPath, to: AnyKeyPath) =
+    #externalMacro(module: "HangarMacrosImpl", type: "HasManyMacro")
+
 /// A child-side association: `foreignKey` is *this* table's column
 /// referencing the related row; `references` is the related column it
 /// points at (the related type's `id` by default, Ecto's convention). A

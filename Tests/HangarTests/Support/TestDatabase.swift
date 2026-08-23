@@ -54,7 +54,7 @@ func withRepo<T: Sendable>(_ body: (Repo) async throws -> T) async throws -> T {
         do {
             try await TestSchema.shared.ensure(client)
             _ = try await client.query(
-                #"TRUNCATE "hangar_posts", "hangar_events", "hangar_authors", "hangar_comments", "hangar_profiles", "hangar_kv", "hangar_tagged""#,
+                #"TRUNCATE "hangar_posts", "hangar_events", "hangar_authors", "hangar_comments", "hangar_profiles", "hangar_kv", "hangar_tagged", "hangar_tags", "hangar_post_tags", "hangar_tagged_posts""#,
                 logger: nil)
             let result = try await body(Repo(client: client))
             group.cancelAll()
@@ -81,6 +81,9 @@ actor TestSchema {
             #"DROP TABLE IF EXISTS "hangar_profiles""#,
             #"DROP TABLE IF EXISTS "hangar_kv""#,
             #"DROP TABLE IF EXISTS "hangar_tagged""#,
+            #"DROP TABLE IF EXISTS "hangar_tags""#,
+            #"DROP TABLE IF EXISTS "hangar_post_tags""#,
+            #"DROP TABLE IF EXISTS "hangar_tagged_posts""#,
             #"DROP TYPE IF EXISTS "post_status""#,
             #"CREATE TYPE "post_status" AS ENUM ('draft', 'published', 'archived')"#,
             #"""
@@ -137,6 +140,25 @@ actor TestSchema {
                 "name" text NOT NULL,
                 "labels" text[] NOT NULL,
                 "scores" bigint[] NOT NULL
+            )
+            """#,
+            #"""
+            CREATE TABLE "hangar_tags" (
+                "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+                "label" text NOT NULL
+            )
+            """#,
+            #"""
+            CREATE TABLE "hangar_post_tags" (
+                "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+                "post_id" uuid NOT NULL,
+                "tag_id" uuid NOT NULL
+            )
+            """#,
+            #"""
+            CREATE TABLE "hangar_tagged_posts" (
+                "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+                "title" text NOT NULL
             )
             """#,
         ]
