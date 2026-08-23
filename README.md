@@ -164,6 +164,7 @@ try await repo.stream(Post.all.order { $0.id.asc() }) { posts in
 the count returned and typed, bound assignments:
 
 ```swift
+try await repo.insert(rows.map(Event.init))          // one multi-row INSERT
 try await repo.delete(Session.where { $0.expiresAt < .now })
 try await repo.update(Post.where { $0.published == false }) {
     ($0.published.set(to: true), $0.reviewedAt.set(to: Date()))

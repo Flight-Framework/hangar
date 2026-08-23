@@ -254,6 +254,30 @@ public struct Repo: Sendable {
         return stored
     }
 
+    /// Inserts every model in one statement — one round trip, however many
+    /// rows — and returns them as the database now holds them, in input
+    /// order. An empty array is a no-op answering `[]`.
+    ///
+    /// ```swift
+    /// let stored = try await repo.insert(rows.map(Event.init))
+    /// ```
+    ///
+    /// This is one statement but **not** a transaction of its own beyond
+    /// what a single statement already is: it is atomic — all rows or, on
+    /// any constraint violation, none — because a failed statement inserts
+    /// nothing.
+    @discardableResult
+    public func insert<M: Table>(_ models: [M]) async throws -> [M] {
+        guard !models.isEmpty else { return [] }
+        let returned: [M] = try await rows(
+            for: SQLRenderer.insert(models), intent: .write, operation: "insert")
+        guard returned.count == models.count else {
+            // A rule or trigger swallowed part of the write.
+            throw HangarError.staleModel(table: M.schema.name)
+        }
+        return returned
+    }
+
     /// Writes every non-key column of the model's row, identified by primary
     /// key, and returns the stored result. Throws `HangarError.staleModel`
     /// if the row no longer exists.

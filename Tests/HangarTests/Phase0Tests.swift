@@ -288,3 +288,57 @@ extension PostgresIntegrationSuite {
         }
     }
 }
+
+// MARK: - Batch insert
+
+@Suite("Batch insert — SQL")
+struct BatchInsertRendererTests {
+
+    @Test("many models render one multi-row VALUES statement")
+    func multiRowShape() throws {
+        let statement = try SQLRenderer.insert([
+            Event(name: "a"), Event(name: "b"), Event(name: "c"),
+        ])
+        #expect(
+            statement.sql
+                == #"INSERT INTO "hangar_events" ("name") VALUES ($1), ($2), ($3) RETURNING "id", "name""#)
+        #expect(statement.binds.count == 3)
+    }
+}
+
+extension PostgresIntegrationSuite {
+    @Suite("Batch insert (real Postgres)")
+    struct BatchInsertIntegrationTests {
+
+        @Test("one round trip inserts every row and returns them in input order")
+        func batchInsert() async throws {
+            try await withRepo { repo in
+                let stored = try await repo.insert(
+                    (1...5).map { Event(name: "event-\($0)") })
+                #expect(stored.map(\.name) == (1...5).map { "event-\($0)" })
+                // Database-generated ids were read back, ascending with order.
+                #expect(stored.map(\.id) == stored.map(\.id).sorted())
+                #expect(try await repo.count(Event.all) == 5)
+
+                // Empty input is a no-op answering [].
+                let none = try await repo.insert([Event]())
+                #expect(none.isEmpty)
+            }
+        }
+
+        @Test("a constraint violation inserts nothing — single-statement atomicity")
+        func batchIsAtomic() async throws {
+            try await withRepo { repo in
+                try await repo.insert(KV(key: "taken", value: "first"))
+                await #expect(throws: (any Error).self) {
+                    try await repo.insert([
+                        KV(key: "fresh", value: "x"),
+                        KV(key: "taken", value: "collides"),
+                    ])
+                }
+                // The valid row did not survive its batch-mate's failure.
+                #expect(try await repo.count(KV.all) == 1)
+            }
+        }
+    }
+}

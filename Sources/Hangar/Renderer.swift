@@ -220,6 +220,27 @@ enum SQLRenderer {
         return RenderedStatement(sql: sql, binds: writer.binds)
     }
 
+    /// `INSERT INTO t (cols) VALUES (...), (...), ... RETURNING cols` —
+    /// every model in one statement, one round trip.
+    static func insert<M: Table>(_ models: [M]) throws -> RenderedStatement {
+        let schema = M.schema
+        let columns = schema.insertable
+        var writer = BindWriter()
+        let rows = try models
+            .map { model in
+                let placeholders = try columns
+                    .map { writer.placeholder(try bind(model, $0.name, in: schema)) }
+                    .joined(separator: ", ")
+                return "(\(placeholders))"
+            }
+            .joined(separator: ", ")
+        let sql = """
+            INSERT INTO \(schema.quotedName) (\(schema.insertList)) \
+            VALUES \(rows) RETURNING \(schema.selectList)
+            """
+        return RenderedStatement(sql: sql, binds: writer.binds)
+    }
+
     static func update<M: Table>(_ model: M) throws -> RenderedStatement {
         let schema = M.schema
         let sets = schema.updatable

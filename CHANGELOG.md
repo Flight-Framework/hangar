@@ -61,6 +61,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   through joins rather than being silently dropped, is stripped from `count`
   (counting must not lock), and is refused by bulk writes (which take their
   own locks).
+- **Batch insert.** `repo.insert([models])` — one multi-row `VALUES`
+  statement, one round trip, results returned in input order with generated
+  columns read back. Atomic as any single statement is: a constraint
+  violation anywhere inserts nothing.
 - **Bulk `update(query, set:)`.** One statement across every matching row,
   with typed, bound assignments and the row count returned:
   `repo.update(Post.where { $0.published == false }) { ($0.published.set(to: true)) }`.
