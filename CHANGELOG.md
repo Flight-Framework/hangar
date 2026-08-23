@@ -8,6 +8,21 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Transaction isolation levels and retry.**
+  `repo.transaction(isolation: .serializable) { }` applies the level to the
+  outermost `BEGIN` (nested calls are savepoints and cannot change it), and
+  `transaction(isolation:retryingOnSerializationFailure:_:)` re-runs the
+  whole transaction on SQLSTATE `40001`/`40P01` — the standard SERIALIZABLE
+  pattern, verified by a real write-skew contention test.
+- **In-transaction escape hatch.** `repo.execute("SET LOCAL ...")` runs one
+  raw statement, bind-safe under `SQLFragment`'s interpolation rules, on the
+  transaction's own connection — which is what `SET LOCAL`, advisory locks,
+  and DDL need, with no raw connection ever exposed.
+- **Row locks as first-class query modifiers.** `Query.lockForUpdate()` /
+  `.lockForShare()`. A locking read always routes to the primary, carries
+  through joins rather than being silently dropped, is stripped from `count`
+  (counting must not lock), and is refused by bulk writes (which take their
+  own locks).
 - **Bulk `update(query, set:)`.** One statement across every matching row,
   with typed, bound assignments and the row count returned:
   `repo.update(Post.where { $0.published == false }) { ($0.published.set(to: true)) }`.

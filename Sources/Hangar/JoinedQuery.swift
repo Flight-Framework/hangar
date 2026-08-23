@@ -27,6 +27,7 @@ public struct JoinedQuery<A: Table, B: Table, Result: Sendable>: Sendable {
     var rowLimit: Int? = nil
     var rowOffset: Int? = nil
     var isDistinct = false
+    var rowLock: RowLock? = nil
     /// Preloads apply when `Result == A` (the base-entity path).
     var preloads: [PreloadStep<A>] = []
     var selection: Selection<Result>? = nil
@@ -40,6 +41,7 @@ public struct JoinedQuery<A: Table, B: Table, Result: Sendable>: Sendable {
         next.rowLimit = rowLimit
         next.rowOffset = rowOffset
         next.isDistinct = isDistinct
+        next.rowLock = rowLock
         next.selection = selection
         return next
     }
@@ -101,6 +103,9 @@ extension Query {
         next.rowLimit = rowLimit
         next.rowOffset = rowOffset
         next.isDistinct = isDistinct
+        // A lock composed before the join carries through — dropping it
+        // silently would leave rows unlocked that the caller asked to lock.
+        next.rowLock = rowLock
         next.preloads = preloads
         return next
     }
@@ -285,6 +290,9 @@ extension SQLRenderer {
         }
         if let limit = query.rowLimit { sql += " LIMIT \(limit)" }
         if let offset = query.rowOffset { sql += " OFFSET \(offset)" }
+        // Postgres itself rejects the invalid combinations loudly (FOR
+        // UPDATE on the nullable side of an outer join, with GROUP BY...).
+        if let lock = query.rowLock { sql += " \(lock.rawValue)" }
         return RenderedStatement(sql: sql, binds: writer.binds)
     }
 }
@@ -295,7 +303,7 @@ extension Repo {
     /// Base-entity fetch through a join: decodes `A` rows, then runs any
     /// carried preloads.
     public func all<A: Table, B: Table>(_ query: JoinedQuery<A, B, A>) async throws -> [A] {
-        let sequence = try await execute(SQLRenderer.select(query).postgresQuery(), intent: .read, operation: "select")
+        let sequence = try await execute(SQLRenderer.select(query).postgresQuery(), intent: query.rowLock == nil ? .read : .write, operation: "select")
         var models: [A] = []
         for try await row in sequence {
             models.append(try A(from: row))
@@ -315,7 +323,7 @@ extension Repo {
         if let invalid = selection.invalid {
             throw invalid
         }
-        let sequence = try await execute(SQLRenderer.select(query).postgresQuery(), intent: .read, operation: "select")
+        let sequence = try await execute(SQLRenderer.select(query).postgresQuery(), intent: query.rowLock == nil ? .read : .write, operation: "select")
         var results: [R] = []
         for try await row in sequence {
             results.append(try selection.decode(row))

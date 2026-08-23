@@ -93,14 +93,27 @@ try await repo.all(Post.all.preload(\.author).preload(\.comments))
 An association that was never preloaded throws `notPreloaded` rather than
 silently returning nothing. Loud beats empty.
 
-**Transactions** with real savepoint nesting:
+**Transactions** with real savepoint nesting, isolation levels, and
+retry-on-serialization-failure:
 
 ```swift
-try await repo.transaction { tx in
+try await repo.transaction(isolation: .serializable, retryingOnSerializationFailure: 3) { tx in
     try await tx.insert(order)
     try await tx.transaction { inner in       // SAVEPOINT
         try await inner.insert(lineItem)
     }
+}
+```
+
+**Row locks and raw statements** where the type system can't reach —
+`lockForUpdate()` is first-class, and `execute` is bind-safe raw SQL on the
+transaction's own connection:
+
+```swift
+try await repo.transaction { tx in
+    try await tx.execute("SET LOCAL statement_timeout = \(raw: "'5s'")")
+    let account = try await tx.one(Account.where { $0.id == id }.lockForUpdate())
+    ...
 }
 ```
 
@@ -163,12 +176,7 @@ let repo = Repo(connection: connection)
 ## What is not here
 
 No migrations — use a migration tool. No CTEs, no `DISTINCT ON`, no
-three-table joins or self-joins, no `@HasMany(through:)`, no transaction
-isolation levels, and no escape hatch for running arbitrary SQL *inside* a
-`transaction { }`.
-
-Those are real gaps rather than statements of principle. The one most likely
-to bite is the in-transaction escape hatch.
+three-table joins or self-joins, and no `@HasMany(through:)`.
 
 ## Documentation
 

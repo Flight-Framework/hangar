@@ -90,6 +90,7 @@ enum SQLRenderer {
         // LIMIT/OFFSET are validated Ints; rendered literally.
         if let limit = query.rowLimit { sql += " LIMIT \(limit)" }
         if let offset = query.rowOffset { sql += " OFFSET \(offset)" }
+        if let lock = query.rowLock { sql += " \(lock.rawValue)" }
         return sql
     }
 
@@ -149,6 +150,9 @@ enum SQLRenderer {
         stripped.rowLimit = nil
         stripped.rowOffset = nil
         stripped.preloads = []
+        // Counting must not lock the rows it counts — a lock inside a count
+        // subquery would be a real, invisible side effect.
+        stripped.rowLock = nil
         return stripped
     }
 
@@ -353,6 +357,9 @@ enum SQLRenderer {
             unsupported = "HAVING"
         } else if query.isDistinct {
             unsupported = "DISTINCT"
+        } else if let lock = query.rowLock {
+            // DELETE and UPDATE already take their own row locks.
+            unsupported = lock.rawValue
         } else {
             unsupported = nil
         }
@@ -360,6 +367,29 @@ enum SQLRenderer {
             throw HangarError.bulkWriteClause(
                 table: M.schema.name, operation: operation, clause: unsupported)
         }
+    }
+
+    /// A standalone statement from a fragment — the transaction escape
+    /// hatch's rendering. Unlike a fragment *predicate* this is not
+    /// parenthesized: `(SET LOCAL ...)` is not a statement.
+    static func statement(_ fragment: SQLFragment) -> RenderedStatement {
+        var writer = BindWriter()
+        var sql = ""
+        for part in fragment.parts {
+            switch part {
+            case .sql(let text):
+                sql += text
+            case .bind(let bind):
+                sql += writer.placeholder(bind)
+            case .column(let table, let name):
+                if writer.qualified, !table.isEmpty {
+                    sql += "\(quote(table)).\(quote(name))"
+                } else {
+                    sql += quote(name)
+                }
+            }
+        }
+        return RenderedStatement(sql: sql, binds: writer.binds)
     }
 
     // MARK: Expression rendering

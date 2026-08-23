@@ -15,6 +15,7 @@ public struct Query<Model: Table, Result: Sendable>: Sendable {
     var grouping: [SQLExpression] = []
     var having: Predicate?
     var isDistinct = false
+    var rowLock: RowLock? = nil
     /// Installed by `.select {}`: the SELECT list plus the row
     /// decoder for `Result`. Nil means "whole model" — every schema column
     /// in order, decoded by the generated `init(from:)`.
@@ -34,6 +35,7 @@ public struct Query<Model: Table, Result: Sendable>: Sendable {
         next.grouping = grouping
         next.having = having
         next.isDistinct = isDistinct
+        next.rowLock = rowLock
         next.selection = selection
         return next
     }
@@ -237,6 +239,43 @@ extension Query {
     public func offset(_ count: Int) -> Query<Model, Result> {
         var next = self
         next.rowOffset = count
+        return next
+    }
+}
+
+// MARK: - Row locking
+
+/// The row-locking clause of a locking read.
+enum RowLock: String, Sendable {
+    case update = "FOR UPDATE"
+    case share = "FOR SHARE"
+}
+
+extension Query {
+    /// `SELECT ... FOR UPDATE`: locks the matched rows against concurrent
+    /// writes until the transaction ends.
+    ///
+    /// ```swift
+    /// try await repo.transaction { tx in
+    ///     let account = try await tx.one(Account.where { $0.id == id }.lockForUpdate())
+    ///     // the row is ours until commit
+    /// }
+    /// ```
+    ///
+    /// A locking read is a write in intent, so it always runs on the
+    /// primary, never a read replica — and it only *means* anything inside
+    /// a transaction, since the lock ends when the transaction does.
+    public func lockForUpdate() -> Query<Model, Result> {
+        var next = self
+        next.rowLock = .update
+        return next
+    }
+
+    /// `SELECT ... FOR SHARE`: blocks concurrent writers of the matched
+    /// rows but admits other share-locking readers.
+    public func lockForShare() -> Query<Model, Result> {
+        var next = self
+        next.rowLock = .share
         return next
     }
 }

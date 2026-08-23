@@ -103,7 +103,7 @@ public struct Repo: Sendable {
     /// — one batched query per association, grouped and assigned
     /// into each model's `Loadable`.
     public func all<M: Table>(_ query: Query<M, M>) async throws -> [M] {
-        var models: [M] = try await rows(for: SQLRenderer.select(query), intent: .read, operation: "select")
+        var models: [M] = try await rows(for: SQLRenderer.select(query), intent: query.rowLock == nil ? .read : .write, operation: "select")
         for step in query.preloads {
             try await step.run(&models, self)
         }
@@ -114,7 +114,7 @@ public struct Repo: Sendable {
     /// selection installed the row decoder for it.
     public func all<M, R>(_ query: Query<M, R>) async throws -> [R] {
         let selection = try validatedSelection(of: query)
-        let sequence = try await execute(SQLRenderer.select(query).postgresQuery(), intent: .read, operation: "select")
+        let sequence = try await execute(SQLRenderer.select(query).postgresQuery(), intent: query.rowLock == nil ? .read : .write, operation: "select")
         var results: [R] = []
         for try await row in sequence {
             results.append(try selection.decode(row))
@@ -125,7 +125,7 @@ public struct Repo: Sendable {
     /// At most one row, or `nil`. More than one match is an error, not a
     /// silent first-row pick. Preloads apply to the returned model.
     public func one<M: Table>(_ query: Query<M, M>) async throws -> M? {
-        var models: [M] = try await rows(for: SQLRenderer.select(query.limit(2)), intent: .read, operation: "select")
+        var models: [M] = try await rows(for: SQLRenderer.select(query.limit(2)), intent: query.rowLock == nil ? .read : .write, operation: "select")
         guard models.count <= 1 else {
             throw HangarError.tooManyRows(table: M.schema.name)
         }
@@ -163,7 +163,7 @@ public struct Repo: Sendable {
         _ query: Query<M, M>,
         _ body: (PostgresRowStream<M>) async throws -> T
     ) async throws -> T {
-        let rows = try await execute(SQLRenderer.select(query).postgresQuery(), intent: .read, operation: "select")
+        let rows = try await execute(SQLRenderer.select(query).postgresQuery(), intent: query.rowLock == nil ? .read : .write, operation: "select")
         let lease = StreamLease()
         defer { lease.expire() }
         return try await body(PostgresRowStream(rows: rows, decode: { try M(from: $0) }, lease: lease))
@@ -175,7 +175,7 @@ public struct Repo: Sendable {
         _ body: (PostgresRowStream<R>) async throws -> T
     ) async throws -> T {
         let selection = try validatedSelection(of: query)
-        let rows = try await execute(SQLRenderer.select(query).postgresQuery(), intent: .read, operation: "select")
+        let rows = try await execute(SQLRenderer.select(query).postgresQuery(), intent: query.rowLock == nil ? .read : .write, operation: "select")
         let lease = StreamLease()
         defer { lease.expire() }
         return try await body(PostgresRowStream(rows: rows, decode: selection.decode, lease: lease))
@@ -201,6 +201,37 @@ public struct Repo: Sendable {
 
     public func exists<M, R>(_ query: Query<M, R>) async throws -> Bool {
         try await scalar(Bool.self, for: SQLRenderer.exists(query), table: M.schema.name, operation: "exists")
+    }
+
+    // MARK: Raw statements — the escape hatch
+
+    /// Runs one raw statement, bind-safe by construction.
+    ///
+    /// The interpolation rules are `SQLFragment`'s: literal text becomes
+    /// SQL, interpolated values become bound parameters, and only
+    /// `\(raw:)` — which announces itself — can turn a Swift string into
+    /// statement text.
+    ///
+    /// Inside a `transaction { }` this runs on **that transaction's
+    /// connection**, which is the whole point: `SET LOCAL`, advisory
+    /// locks, and DDL all need connection affinity, and the transaction
+    /// repo provides it with no raw connection ever exposed.
+    ///
+    /// ```swift
+    /// try await repo.transaction { tx in
+    ///     try await tx.execute("SET LOCAL statement_timeout = \(raw: "'5s'")")
+    ///     try await tx.execute("SELECT pg_advisory_xact_lock(\(42))")
+    ///     // ... the actual work ...
+    /// }
+    /// ```
+    ///
+    /// Outside a transaction it runs on the primary, like any write. For
+    /// row locking, prefer `Query.lockForUpdate()` — typed, discoverable,
+    /// and not raw SQL.
+    @discardableResult
+    public func execute(_ statement: SQLFragment) async throws -> PostgresRowSequence {
+        let rendered = SQLRenderer.statement(statement)
+        return try await execute(rendered.postgresQuery(), intent: .write, operation: "execute")
     }
 
     // MARK: Writes — always explicit; no dirty tracking, no autoflush
