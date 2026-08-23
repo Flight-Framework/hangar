@@ -7,12 +7,15 @@
 /// column is a `Column<SomeCodable>` that simply has no comparison
 /// operators until the JSONB operator set arrives (Phase 4/5).
 public struct Column<Value>: Sendable {
+    /// The column's name at the store (`view_count`, not `viewCount`).
     public let name: String
     /// The owning table — used only in scopes where a statement touches
     /// more than one table (correlated subqueries, joins); single-table
     /// SQL stays unqualified.
     public let table: String
 
+    /// A column reference. `table` is the qualifier used in multi-table
+    /// scopes — the table's own name normally, an alias under `Table.alias`.
     public init(_ name: String, table: String = "") {
         self.name = name
         self.table = table
@@ -26,6 +29,7 @@ public struct Column<Value>: Sendable {
 /// One ORDER BY term: `$0.publishedAt.desc`. Carries the
 /// column's table for multi-table scopes; single-table SQL renders it bare.
 public struct OrderTerm: Sendable {
+    /// `ASC` or `DESC`.
     public enum Direction: String, Sendable {
         case asc = "ASC"
         case desc = "DESC"
@@ -37,6 +41,8 @@ public struct OrderTerm: Sendable {
 }
 
 extension Column {
+    /// Order ascending by this column.
     public func asc() -> OrderTerm { OrderTerm(table: table, column: name, direction: .asc) }
+    /// Order descending by this column.
     public func desc() -> OrderTerm { OrderTerm(table: table, column: name, direction: .desc) }
 }

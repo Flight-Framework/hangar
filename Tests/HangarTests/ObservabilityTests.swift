@@ -39,13 +39,10 @@ struct RecordingLogHandler: LogHandler {
         set { metadata[key] = newValue }
     }
 
-    func log(
-        level: Logger.Level, message: Logger.Message, metadata: Logger.Metadata?,
-        source: String, file: String, function: String, line: UInt
-    ) {
+    func log(event: LogEvent) {
         recorder.record(
-            level: level, message: message.description,
-            metadata: self.metadata.merging(metadata ?? [:]) { _, new in new })
+            level: event.level, message: event.message.description,
+            metadata: self.metadata.merging(event.metadata ?? [:]) { _, new in new })
     }
 }
 

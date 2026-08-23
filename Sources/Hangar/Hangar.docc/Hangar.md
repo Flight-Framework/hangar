@@ -59,12 +59,15 @@ just the problem, because someone is usually reading it during an incident.
 
 - ``Query``
 - ``JoinedQuery``
+- ``JoinedQuery3``
+- ``Aliased``
 - ``Predicate``
 - ``DynamicFilterValue``
 
 ### Running them
 
 - ``Repo``
+- ``IsolationLevel``
 - ``Multi``
 - ``PostgresRowStream``
 

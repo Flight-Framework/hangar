@@ -165,6 +165,20 @@ test suite.
 - DocC catalog with two guides: preloading, and transactions and connections.
 - LICENSE, CI with a Postgres service container, CONTRIBUTING, CHANGELOG.
 
+### Documentation and test coverage
+
+- **Every public declaration is documented — 284 of 284, from 42%.** The
+  quality bar is the one the already-documented half set: explain the what
+  and the why, an example where non-obvious, never a restated signature.
+- **Every macro diagnostic has a fixture — 20 of 20, from 7 of 18.** Each
+  misuse's exact message, line, and column is pinned, so a rewording or a
+  silently-vanished diagnostic fails a test instead of shipping. The two
+  diagnostics added this cycle (`entity.belongstotype`, `entity.throughkind`/
+  `entity.throughkeys`) are pinned alongside the eleven that never had one.
+- The DocC guides no longer describe closed gaps as open: the transactions
+  guide now documents isolation levels, retry, `execute`, and row locks; the
+  preloading guide documents `@HasMany(through:)`.
+
 ### Documentation
 
 - README rewritten for an external reader; it was a monorepo status log. It now

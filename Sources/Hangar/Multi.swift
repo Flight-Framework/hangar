@@ -11,12 +11,15 @@ import Changesets
 /// Sendable]`, and the key makes the subscript cast safe, so the erasure
 /// never surfaces in user code.
 public struct MultiKey<Value: Sendable>: Sendable, CustomStringConvertible {
+    /// The key's name — how results are stored and reported.
     public let name: String
 
+    /// Creates a key. Names must be unique within one Multi.
     public init(_ name: String) {
         self.name = name
     }
 
+    /// The key's name.
     public var description: String { name }
 }
 
@@ -54,8 +57,11 @@ public struct MultiValues: Sendable {
 /// Which step failed, why, and everything that had completed before it —
 /// all of which was rolled back.
 public struct MultiFailure: Sendable {
+    /// The failed step's name.
     public let key: String
+    /// What the step threw.
     public let error: any Error
+    /// Every result completed before the failure — all rolled back.
     public let completed: MultiValues
 }
 
@@ -67,6 +73,12 @@ public enum MultiResult: Sendable {
     case failure(MultiFailure)
 }
 
+/// An ordered list of named steps that run in one transaction.
+///
+/// Steps are values: build a Multi conditionally, return it from a
+/// function, compose two with ``merging(_:)`` — nothing runs until
+/// `repo.run(multi)`. Later steps read earlier results through their
+/// typed keys; any failure rolls the whole transaction back.
 public struct Multi: Sendable {
     struct Step: Sendable {
         let name: String
@@ -75,10 +87,12 @@ public struct Multi: Sendable {
 
     private(set) var steps: [Step] = []
 
+    /// An empty Multi — add steps with `insert`/`update`/`delete`/`run`.
     public init() {}
 
     // MARK: Changeset steps
 
+    /// Inserts a changeset; the stored row lands under `key`.
     public func insert<M: Table>(_ key: MultiKey<M>, _ changeset: Changeset<M>) -> Multi {
         adding(key.name) { repo, _ in try await repo.insert(changeset) }
     }
@@ -92,10 +106,13 @@ public struct Multi: Sendable {
         adding(key.name) { repo, values in try await repo.insert(make(values)) }
     }
 
+    /// Dependent update: the changeset is built from earlier results.
+    /// Updates from a changeset; the stored row lands under `key`.
     public func update<M: Table>(_ key: MultiKey<M>, _ changeset: Changeset<M>) -> Multi {
         adding(key.name) { repo, _ in try await repo.update(changeset) }
     }
 
+    /// Dependent update: the changeset is built from earlier results.
     public func update<M: Table>(
         _ key: MultiKey<M>,
         _ make: @escaping @Sendable (MultiValues) throws -> Changeset<M>
@@ -103,6 +120,8 @@ public struct Multi: Sendable {
         adding(key.name) { repo, values in try await repo.update(make(values)) }
     }
 
+    /// Dependent delete: the model to delete is chosen from earlier
+    /// results, and lands under `key` as it was before deletion.
     public func delete<M: Table>(
         _ key: MultiKey<M>,
         _ make: @escaping @Sendable (MultiValues) throws -> M

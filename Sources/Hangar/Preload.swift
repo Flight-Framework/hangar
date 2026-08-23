@@ -19,6 +19,8 @@ public typealias PreloadKey = ColumnCodable & Hashable & PostgresArrayEncodable
 
 // MARK: - Loaders (one per association shape)
 
+/// Generated-registry loader for `@HasMany` — public only for the
+/// macro's expansion, not user API.
 public struct _HasManyLoader<Parent: Table, Child: Table>: Sendable {
     let name: String
     let run: @Sendable (
@@ -64,6 +66,8 @@ public struct _OptionalToOneLoader<Parent: Table, Child: Table>: Sendable {
 
 // MARK: - Factories (called from @Entity-generated metadata)
 
+/// Factory for `@HasMany`'s generated registry entry — one batched
+/// `= ANY($1)` query, grouped in memory by foreign key.
 public func _hasMany<Parent: Table, Child: Table, Key: PreloadKey>(
     name: String,
     parentKey: KeyPath<Parent, Key> & Sendable,
@@ -83,6 +87,8 @@ public func _hasMany<Parent: Table, Child: Table, Key: PreloadKey>(
     }
 }
 
+/// Factory for `@BelongsTo`'s generated registry entry. A non-nil
+/// foreign key that matches no row throws `danglingBelongsTo`.
 public func _belongsTo<Parent: Table, Child: Table, Key: PreloadKey>(
     name: String,
     foreignKey: KeyPath<Parent, Key> & Sendable,
@@ -138,6 +144,8 @@ public func _belongsTo<Parent: Table, Child: Table, Key: PreloadKey>(
     }
 }
 
+/// Factory for `@HasOne`'s generated registry entry — `.loaded(nil)`
+/// means "no related row", which is data, not an error.
 public func _hasOne<Parent: Table, Child: Table, Key: PreloadKey>(
     name: String,
     parentKey: KeyPath<Parent, Key> & Sendable,

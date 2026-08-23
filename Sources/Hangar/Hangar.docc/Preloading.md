@@ -68,6 +68,22 @@ Post.all.preload(\.comments) { comments in
 }
 ```
 
+## Many-to-many, through a join table
+
+`@HasMany(through:)` declares the two-hop shape; loading is two batched
+queries — join table, then related table — reassembled in memory:
+
+```swift
+@HasMany(through: PostTag.self, from: \PostTag.postID, to: \PostTag.tagID)
+var tags: Loadable<[Tag]>
+```
+
+`from:` references this entity's key on the join table; `to:` references
+the related entity's; the related key follows the `\Related.id` convention.
+At the call site `.preload(\.tags)` is identical to a direct has-many.
+Duplicate join rows yield duplicate children — the data's truth — and a
+join row referencing a vanished child is skipped.
+
 ## Preloading through a join
 
 Preloads survive composition into a join, and apply to the base entity:

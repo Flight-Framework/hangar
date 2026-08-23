@@ -1037,3 +1037,369 @@ final class ThroughAssociationFixtureTests: XCTestCase {
             macroSpecs: testMacros)
     }
 }
+
+/// The diagnostics that had no fixture: every message a misuse produces is
+/// pinned here, so a rewording or a silently-vanished diagnostic fails a
+/// test rather than shipping.
+final class EntityDiagnosticFixtureTests: XCTestCase {
+
+    func testTableNameMustBeStringLiteral() {
+        assertMacroExpansion(
+            """
+            @Entity(someVariable)
+            struct Post: Sendable {
+                @ID let id: UUID
+            }
+            """,
+            expandedSource: """
+            struct Post: Sendable {
+                let id: UUID
+            }
+
+            extension Post: Hangar.Table, Changesets.TableModel {
+            }
+            """,
+            diagnostics: [
+                DiagnosticSpec(
+                    message: "@Entity needs a static string literal table name: @Entity(\"posts\").",
+                    line: 1, column: 1)
+            ],
+            macroSpecs: testMacros)
+    }
+
+    func testEmptyEntityIsRejected() {
+        assertMacroExpansion(
+            """
+            @Entity("posts")
+            struct Post: Sendable {
+            }
+            """,
+            expandedSource: """
+            struct Post: Sendable {
+            }
+
+            extension Post: Hangar.Table, Changesets.TableModel {
+            }
+            """,
+            diagnostics: [
+                DiagnosticSpec(
+                    message: "@Entity struct has no stored properties — a table needs at least one column.",
+                    line: 1, column: 1)
+            ],
+            macroSpecs: testMacros)
+    }
+
+    func testMultiBindingIsRejected() {
+        assertMacroExpansion(
+            """
+            @Entity("posts")
+            struct Post: Sendable {
+                @ID let id: UUID
+                var width, height: Int
+            }
+            """,
+            expandedSource: """
+            struct Post: Sendable {
+                let id: UUID
+                var width, height: Int
+            }
+
+            extension Post: Hangar.Table, Changesets.TableModel {
+            }
+            """,
+            diagnostics: [
+                DiagnosticSpec(
+                    message: "@Entity properties must be declared one per line — split 'let a, b: T' into separate declarations.",
+                    line: 4, column: 5)
+            ],
+            macroSpecs: testMacros)
+    }
+
+    func testTuplePatternIsRejected() {
+        assertMacroExpansion(
+            """
+            @Entity("posts")
+            struct Post: Sendable {
+                @ID let id: UUID
+                var (x, y): (Int, Int)
+            }
+            """,
+            expandedSource: """
+            struct Post: Sendable {
+                let id: UUID
+                var (x, y): (Int, Int)
+            }
+
+            extension Post: Hangar.Table, Changesets.TableModel {
+            }
+            """,
+            diagnostics: [
+                DiagnosticSpec(
+                    message: "@Entity properties must be simple identifiers — tuple patterns can't map to columns.",
+                    line: 4, column: 9)
+            ],
+            macroSpecs: testMacros)
+    }
+
+    func testColumnNameMustBeStringLiteral() {
+        assertMacroExpansion(
+            """
+            @Entity("posts")
+            struct Post: Sendable {
+                @ID let id: UUID
+                @Column(someVariable) var title: String
+            }
+            """,
+            expandedSource: """
+            struct Post: Sendable {
+                let id: UUID
+                var title: String
+            }
+
+            extension Post: Hangar.Table, Changesets.TableModel {
+            }
+            """,
+            diagnostics: [
+                DiagnosticSpec(
+                    message: "@Column needs a static string literal column name.",
+                    line: 4, column: 5)
+            ],
+            macroSpecs: testMacros)
+    }
+
+    func testAssociationCannotBeAColumn() {
+        assertMacroExpansion(
+            """
+            @Entity("posts")
+            struct Post: Sendable {
+                @ID let id: UUID
+                @Column("tags") @HasMany(foreignKey: \\Tag.postID)
+                var tags: Loadable<[Tag]>
+            }
+            """,
+            expandedSource: """
+            struct Post: Sendable {
+                let id: UUID
+                @HasMany(foreignKey: \\Tag.postID)
+                var tags: Loadable<[Tag]>
+            }
+
+            extension Post: Hangar.Table, Changesets.TableModel {
+            }
+            """,
+            diagnostics: [
+                DiagnosticSpec(
+                    message: "@HasMany can't combine with @ID/@Column/@JSONB — an association is not a column.",
+                    line: 4, column: 5)
+            ],
+            macroSpecs: testMacros)
+    }
+
+    func testAssociationMustBeLoadable() {
+        assertMacroExpansion(
+            """
+            @Entity("posts")
+            struct Post: Sendable {
+                @ID let id: UUID
+                @HasMany(foreignKey: \\Tag.postID)
+                var tags: [Tag]
+            }
+            """,
+            expandedSource: """
+            struct Post: Sendable {
+                let id: UUID
+                @HasMany(foreignKey: \\Tag.postID)
+                var tags: [Tag]
+            }
+
+            extension Post: Hangar.Table, Changesets.TableModel {
+            }
+            """,
+            diagnostics: [
+                DiagnosticSpec(
+                    message: "@HasMany properties must be Loadable — the runtime marker for \"populated only by preload\".",
+                    line: 4, column: 5)
+            ],
+            macroSpecs: testMacros)
+    }
+
+    func testHasManyNeedsArrayShape() {
+        assertMacroExpansion(
+            """
+            @Entity("posts")
+            struct Post: Sendable {
+                @ID let id: UUID
+                @HasMany(foreignKey: \\Tag.postID)
+                var tag: Loadable<Tag>
+            }
+            """,
+            expandedSource: """
+            struct Post: Sendable {
+                let id: UUID
+                @HasMany(foreignKey: \\Tag.postID)
+                var tag: Loadable<Tag>
+            }
+
+            extension Post: Hangar.Table, Changesets.TableModel {
+            }
+            """,
+            diagnostics: [
+                DiagnosticSpec(
+                    message: "@HasMany properties must be Loadable<[Related]>.",
+                    line: 4, column: 5)
+            ],
+            macroSpecs: testMacros)
+    }
+
+    func testAssociationNeedsForeignKey() {
+        assertMacroExpansion(
+            """
+            @Entity("posts")
+            struct Post: Sendable {
+                @ID let id: UUID
+                @HasMany
+                var tags: Loadable<[Tag]>
+            }
+            """,
+            expandedSource: """
+            struct Post: Sendable {
+                let id: UUID
+                @HasMany
+                var tags: Loadable<[Tag]>
+            }
+
+            extension Post: Hangar.Table, Changesets.TableModel {
+            }
+            """,
+            diagnostics: [
+                DiagnosticSpec(
+                    message: "@HasMany needs a foreignKey: keypath argument.",
+                    line: 4, column: 5)
+            ],
+            macroSpecs: testMacros)
+    }
+
+    func testBelongsToRejectsArrayShape() {
+        assertMacroExpansion(
+            """
+            @Entity("comments")
+            struct Comment: Sendable {
+                @ID let id: UUID
+                @BelongsTo(foreignKey: \\Comment.authorID)
+                var authors: Loadable<[Author]>
+            }
+            """,
+            expandedSource: """
+            struct Comment: Sendable {
+                let id: UUID
+                @BelongsTo(foreignKey: \\Comment.authorID)
+                var authors: Loadable<[Author]>
+            }
+
+            extension Comment: Hangar.Table, Changesets.TableModel {
+            }
+            """,
+            diagnostics: [
+                DiagnosticSpec(
+                    message: "@BelongsTo properties must be Loadable<Related> (non-null foreign key) or Loadable<Related?> (nullable) — for a collection, use @HasMany.",
+                    line: 4, column: 5)
+            ],
+            macroSpecs: testMacros)
+    }
+
+    func testThroughIsHasManyOnly() {
+        assertMacroExpansion(
+            """
+            @Entity("comments")
+            struct Comment: Sendable {
+                @ID let id: UUID
+                @BelongsTo(through: PostTag.self, from: \\PostTag.postID, to: \\PostTag.tagID)
+                var author: Loadable<Author>
+            }
+            """,
+            expandedSource: """
+            struct Comment: Sendable {
+                let id: UUID
+                @BelongsTo(through: PostTag.self, from: \\PostTag.postID, to: \\PostTag.tagID)
+                var author: Loadable<Author>
+            }
+
+            extension Comment: Hangar.Table, Changesets.TableModel {
+            }
+            """,
+            diagnostics: [
+                DiagnosticSpec(
+                    message: "through: is @HasMany-only — @BelongsTo is a single-hop association.",
+                    line: 4, column: 5)
+            ],
+            macroSpecs: testMacros)
+    }
+
+    func testThroughNeedsFromAndTo() {
+        assertMacroExpansion(
+            """
+            @Entity("posts")
+            struct Post: Sendable {
+                @ID let id: UUID
+                @HasMany(through: PostTag.self)
+                var tags: Loadable<[Tag]>
+            }
+            """,
+            expandedSource: """
+            struct Post: Sendable {
+                let id: UUID
+                @HasMany(through: PostTag.self)
+                var tags: Loadable<[Tag]>
+            }
+
+            extension Post: Hangar.Table, Changesets.TableModel {
+            }
+            """,
+            diagnostics: [
+                DiagnosticSpec(
+                    message: "@HasMany(through:) needs from: and to: keypaths on the join table — from: references this entity's key, to: the related entity's.",
+                    line: 4, column: 5)
+            ],
+            macroSpecs: testMacros)
+    }
+
+    func testMarkerOnNonProperty() {
+        assertMacroExpansion(
+            """
+            struct Post {
+                @ID func compute() -> Int { 1 }
+            }
+            """,
+            expandedSource: """
+            struct Post {
+                func compute() -> Int { 1 }
+            }
+            """,
+            diagnostics: [
+                DiagnosticSpec(
+                    message: "@ID can only be attached to a stored property of an @Entity struct.",
+                    line: 2, column: 5)
+            ],
+            macroSpecs: testMacros)
+    }
+
+    func testMarkerNeedsTypeAnnotation() {
+        assertMacroExpansion(
+            """
+            struct Post {
+                @Column("n") var n = 3
+            }
+            """,
+            expandedSource: """
+            struct Post {
+                var n = 3
+            }
+            """,
+            diagnostics: [
+                DiagnosticSpec(
+                    message: "@Column properties need an explicit type annotation — the column's Swift type is read from it.",
+                    line: 2, column: 5)
+            ],
+            macroSpecs: testMacros)
+    }
+}

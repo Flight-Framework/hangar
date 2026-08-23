@@ -25,6 +25,7 @@ public struct Assignment<Value>: Sendable, Assignable {
     let name: String
     let expression: SQLExpression
 
+    /// The type-erased form the renderer consumes — not user API.
     public var _assignment: ColumnAssignment {
         ColumnAssignment(name: name, expression: expression)
     }

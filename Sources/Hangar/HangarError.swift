@@ -100,6 +100,8 @@ public enum HangarError: Error, Sendable, CustomStringConvertible {
     /// Hangar should fail one request, not the process.
     case unknownColumn(table: String, column: String)
 
+    /// Every message names the fix, not just the problem — someone is
+    /// usually reading it during an incident.
     public var description: String {
         switch self {
         case .noAmbientRepo:

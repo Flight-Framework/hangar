@@ -53,6 +53,7 @@ public protocol Table: RowDecodable, TableModel {
 }
 
 extension Table {
+    /// Entities with no associations answer nil for everything.
     public static func _association(for keyPath: AnyKeyPath) -> (any Sendable)? {
         nil
     }
@@ -66,11 +67,13 @@ extension Table {
 /// single query. (Benchmarks: filtering and re-quoting per query cost more
 /// than the rest of rendering put together.)
 public struct TableSchema: Sendable {
+    /// The table's name, unquoted.
     public let name: String
     /// All columns, in declaration order — also the order every SELECT and
     /// RETURNING list is rendered in, and the order the decoder consumes.
     public let columns: [ColumnDefinition]
 
+    /// The identity columns — every column flagged primary-key.
     public let primaryKey: [ColumnDefinition]
     /// Columns included in INSERT statements (everything the database
     /// doesn't generate itself).
@@ -99,6 +102,8 @@ public struct TableSchema: Sendable {
             .joined(separator: ", ")
     }
 
+    /// Builds the schema and precomputes every derived list — called by
+    /// `@Entity`'s expansion, once per type.
     public init(name: String, columns: [ColumnDefinition]) {
         self.name = name
         self.columns = columns
@@ -120,8 +125,12 @@ public struct TableSchema: Sendable {
     }
 }
 
+/// One column as the schema records it: name, identity, and whether
+/// the database generates it.
 public struct ColumnDefinition: Sendable, Equatable {
+    /// The column's name, unquoted.
     public let name: String
+    /// Whether this column is part of the row's identity.
     public let isPrimaryKey: Bool
     /// `@ID(generated: true)`: the database produces the value (identity /
     /// serial / default); the column is excluded from INSERT lists and read
@@ -130,6 +139,7 @@ public struct ColumnDefinition: Sendable, Equatable {
     /// The name pre-quoted, so rendering never re-escapes it.
     let quotedName: String
 
+    /// Declares one column — called by `@Entity`'s expansion.
     public init(name: String, isPrimaryKey: Bool = false, isGenerated: Bool = false) {
         self.name = name
         self.isPrimaryKey = isPrimaryKey
@@ -137,6 +147,7 @@ public struct ColumnDefinition: Sendable, Equatable {
         self.quotedName = SQLRenderer.quote(name)
     }
 
+    /// Equality over every recorded property.
     public static func == (lhs: ColumnDefinition, rhs: ColumnDefinition) -> Bool {
         lhs.name == rhs.name && lhs.isPrimaryKey == rhs.isPrimaryKey
             && lhs.isGenerated == rhs.isGenerated

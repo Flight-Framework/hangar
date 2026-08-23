@@ -25,6 +25,9 @@
         named(columns), named(init), named(_bind(for:)),
         named(_changesetBind(column:value:)), named(_association(for:)))
 @attached(extension, conformances: Table, TableModel)
+/// Declares a struct as a table-backed entity: generates the typed
+/// column set, schema metadata, row decoder, changeset metadata, and
+/// association registry — the whole `Table` conformance.
 public macro Entity(_ tableName: String) =
     #externalMacro(module: "HangarMacrosImpl", type: "EntityMacro")
 

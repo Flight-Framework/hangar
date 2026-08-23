@@ -33,17 +33,22 @@ public struct SQLFragment: Sendable, ExpressibleByStringInterpolation {
 
     let parts: [Part]
 
+    /// A literal-only fragment — pure SQL text, no binds.
     public init(stringLiteral value: String) {
         self.parts = [.sql(value)]
     }
 
+    /// Built by Swift's interpolation machinery — not called directly.
     public init(stringInterpolation: StringInterpolation) {
         self.parts = stringInterpolation.parts
     }
 
+    /// The interpolation rules: literals are SQL, values are binds,
+    /// columns are identifiers, `\(raw:)` is the announced escape hatch.
     public struct StringInterpolation: StringInterpolationProtocol, Sendable {
         var parts: [Part] = []
 
+        /// Called by Swift's interpolation machinery — not user API.
         public init(literalCapacity: Int, interpolationCount: Int) {
             parts.reserveCapacity(interpolationCount * 2 + 1)
         }

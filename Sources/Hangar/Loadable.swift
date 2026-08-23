@@ -40,6 +40,8 @@ public enum Loadable<T: Sendable>: Sendable {
         return nil
     }
 
+    /// Whether the association was preloaded — the non-throwing question,
+    /// for when absence is genuinely acceptable.
     public var isLoaded: Bool {
         if case .loaded = self { return true }
         return false

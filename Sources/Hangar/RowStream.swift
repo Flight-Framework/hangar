@@ -17,6 +17,7 @@ public struct PostgresRowStream<Element: Sendable>: AsyncSequence, Sendable {
     let decode: @Sendable (PostgresRow) throws -> Element
     let lease: StreamLease
 
+    /// Decodes one row per `next()`, while the lease is live.
     public struct AsyncIterator: AsyncIteratorProtocol {
         var base: PostgresRowSequence.AsyncIterator
         let decode: @Sendable (PostgresRow) throws -> Element
@@ -31,6 +32,7 @@ public struct PostgresRowStream<Element: Sendable>: AsyncSequence, Sendable {
         }
     }
 
+    /// An iterator sharing this stream's lease.
     public func makeAsyncIterator() -> AsyncIterator {
         AsyncIterator(base: rows.makeAsyncIterator(), decode: decode, lease: lease)
     }

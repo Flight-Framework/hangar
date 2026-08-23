@@ -21,6 +21,7 @@ public protocol Selectable<Value>: Sendable {
 }
 
 extension Column: Selectable {
+    /// A bare column selects itself — not user API.
     public var _selectFragment: SelectFragment { SelectFragment(expression: expression) }
 }
 
@@ -29,6 +30,7 @@ extension Column: Selectable {
 public struct SelectExpression<Value>: Sendable, Selectable {
     let expression: SQLExpression
 
+    /// The expression as a SELECT-list item — not user API.
     public var _selectFragment: SelectFragment { SelectFragment(expression: expression) }
 }
 
@@ -42,36 +44,46 @@ public struct SelectExpression<Value>: Sendable, Selectable {
 // optionals; `count` alone is total.
 
 extension Column {
+    /// `count(column)` — how many rows have a non-NULL value here. Total
+    /// even over zero rows, which is why this one aggregate is non-optional.
     public func count() -> SelectExpression<Int> {
         SelectExpression(expression: .function("count", [expression]))
     }
 }
 
 extension Column where Value: BinaryInteger {
+    /// `sum(column)` for integer columns, cast to `bigint` so the NUMERIC
+    /// Postgres widens to decodes as `Int`. NULL over zero rows.
     public func sum() -> SelectExpression<Int?> {
         SelectExpression(expression: .cast(.function("sum", [expression]), "bigint"))
     }
 
+    /// `avg(column)` for integer columns, cast to `float8` for the same
+    /// NUMERIC reason as `sum`. NULL over zero rows.
     public func avg() -> SelectExpression<Double?> {
         SelectExpression(expression: .cast(.function("avg", [expression]), "float8"))
     }
 }
 
 extension Column where Value: BinaryFloatingPoint {
+    /// `sum(column)` for floating-point columns. NULL over zero rows.
     public func sum() -> SelectExpression<Double?> {
         SelectExpression(expression: .cast(.function("sum", [expression]), "float8"))
     }
 
+    /// `avg(column)` for floating-point columns. NULL over zero rows.
     public func avg() -> SelectExpression<Double?> {
         SelectExpression(expression: .cast(.function("avg", [expression]), "float8"))
     }
 }
 
 extension Column where Value: Comparable & ColumnCodable {
+    /// `min(column)`. NULL over zero rows.
     public func min() -> SelectExpression<Value?> {
         SelectExpression(expression: .function("min", [expression]))
     }
 
+    /// `max(column)`. NULL over zero rows.
     public func max() -> SelectExpression<Value?> {
         SelectExpression(expression: .function("max", [expression]))
     }
@@ -79,44 +91,54 @@ extension Column where Value: Comparable & ColumnCodable {
 
 // MARK: - Aggregate comparisons (for `having`, )
 
+/// Aggregate equality, for `having` — `$0.id.count() == 3`.
 public func == <V: ColumnCodable & Equatable>(lhs: SelectExpression<V>, rhs: V) -> Predicate {
     Predicate(expression: .infix("=", lhs.expression, .bind(SQLBind(rhs))))
 }
 
+/// Aggregate comparison, for `having` — `$0.viewCount.sum() > 1_000`.
 public func > <V: ColumnCodable & Comparable>(lhs: SelectExpression<V>, rhs: V) -> Predicate {
     Predicate(expression: .infix(">", lhs.expression, .bind(SQLBind(rhs))))
 }
 
+/// Aggregate comparison, for `having`.
 public func >= <V: ColumnCodable & Comparable>(lhs: SelectExpression<V>, rhs: V) -> Predicate {
     Predicate(expression: .infix(">=", lhs.expression, .bind(SQLBind(rhs))))
 }
 
+/// Aggregate comparison, for `having`.
 public func < <V: ColumnCodable & Comparable>(lhs: SelectExpression<V>, rhs: V) -> Predicate {
     Predicate(expression: .infix("<", lhs.expression, .bind(SQLBind(rhs))))
 }
 
+/// Aggregate comparison, for `having`.
 public func <= <V: ColumnCodable & Comparable>(lhs: SelectExpression<V>, rhs: V) -> Predicate {
     Predicate(expression: .infix("<=", lhs.expression, .bind(SQLBind(rhs))))
 }
 
 // Nullable aggregates (sum/avg/min/max) compare against non-nil values;
 // SQL's NULL comparison semantics (never true) carry through unchanged.
+/// Nullable-aggregate equality: SQL NULL compares as never-true, unchanged.
 public func == <V: ColumnCodable & Equatable>(lhs: SelectExpression<V?>, rhs: V) -> Predicate {
     Predicate(expression: .infix("=", lhs.expression, .bind(SQLBind(rhs))))
 }
 
+/// Nullable-aggregate comparison: SQL NULL compares as never-true, unchanged.
 public func > <V: ColumnCodable & Comparable>(lhs: SelectExpression<V?>, rhs: V) -> Predicate {
     Predicate(expression: .infix(">", lhs.expression, .bind(SQLBind(rhs))))
 }
 
+/// Nullable-aggregate comparison: SQL NULL compares as never-true, unchanged.
 public func >= <V: ColumnCodable & Comparable>(lhs: SelectExpression<V?>, rhs: V) -> Predicate {
     Predicate(expression: .infix(">=", lhs.expression, .bind(SQLBind(rhs))))
 }
 
+/// Nullable-aggregate comparison: SQL NULL compares as never-true, unchanged.
 public func < <V: ColumnCodable & Comparable>(lhs: SelectExpression<V?>, rhs: V) -> Predicate {
     Predicate(expression: .infix("<", lhs.expression, .bind(SQLBind(rhs))))
 }
 
+/// Nullable-aggregate comparison: SQL NULL compares as never-true, unchanged.
 public func <= <V: ColumnCodable & Comparable>(lhs: SelectExpression<V?>, rhs: V) -> Predicate {
     Predicate(expression: .infix("<=", lhs.expression, .bind(SQLBind(rhs))))
 }

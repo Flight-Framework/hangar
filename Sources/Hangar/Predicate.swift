@@ -49,19 +49,23 @@ public protocol PredicateConvertible: Sendable {
 }
 
 extension Predicate: PredicateConvertible {
+    /// A predicate is trivially predicate-convertible — identity.
     public var predicate: Predicate { self }
 }
 
 extension Column: PredicateConvertible where Value == Bool {
+    /// A boolean column stands alone as a predicate: `.where { $0.published }`.
     public var predicate: Predicate { Predicate(expression: expression) }
 }
 
 // MARK: - Comparison operators
 
+/// `column = value` — the value is always a bound parameter.
 public func == <V: ColumnCodable & Equatable>(lhs: Column<V>, rhs: V) -> Predicate {
     Predicate(expression: .infix("=", lhs.expression, .bind(SQLBind(rhs))))
 }
 
+/// `column <> value`.
 public func != <V: ColumnCodable & Equatable>(lhs: Column<V>, rhs: V) -> Predicate {
     Predicate(expression: .infix("<>", lhs.expression, .bind(SQLBind(rhs))))
 }
@@ -73,33 +77,40 @@ public func == <V: ColumnCodable & Equatable>(lhs: Column<V?>, rhs: V?) -> Predi
     return Predicate(expression: .infix("=", lhs.expression, .bind(SQLBind(rhs))))
 }
 
+/// `column <> value` for an optional column; `!= nil` renders `IS NOT NULL`.
 public func != <V: ColumnCodable & Equatable>(lhs: Column<V?>, rhs: V?) -> Predicate {
     guard let rhs else { return Predicate(expression: .isNotNull(lhs.expression)) }
     return Predicate(expression: .infix("<>", lhs.expression, .bind(SQLBind(rhs))))
 }
 
+/// `column < value`.
 public func < <V: ColumnCodable & Comparable>(lhs: Column<V>, rhs: V) -> Predicate {
     Predicate(expression: .infix("<", lhs.expression, .bind(SQLBind(rhs))))
 }
 
+/// `column > value`.
 public func > <V: ColumnCodable & Comparable>(lhs: Column<V>, rhs: V) -> Predicate {
     Predicate(expression: .infix(">", lhs.expression, .bind(SQLBind(rhs))))
 }
 
+/// `column <= value`.
 public func <= <V: ColumnCodable & Comparable>(lhs: Column<V>, rhs: V) -> Predicate {
     Predicate(expression: .infix("<=", lhs.expression, .bind(SQLBind(rhs))))
 }
 
+/// `column >= value`.
 public func >= <V: ColumnCodable & Comparable>(lhs: Column<V>, rhs: V) -> Predicate {
     Predicate(expression: .infix(">=", lhs.expression, .bind(SQLBind(rhs))))
 }
 
 // MARK: - Boolean combinators (the spike surface)
 
+/// Both predicates — renders `(lhs AND rhs)`, fully parenthesized.
 public func && (lhs: some PredicateConvertible, rhs: some PredicateConvertible) -> Predicate {
     Predicate(expression: .infix("AND", lhs.predicate.expression, rhs.predicate.expression))
 }
 
+/// Either predicate — renders `(lhs OR rhs)`, fully parenthesized.
 public func || (lhs: some PredicateConvertible, rhs: some PredicateConvertible) -> Predicate {
     Predicate(expression: .infix("OR", lhs.predicate.expression, rhs.predicate.expression))
 }
@@ -110,10 +121,12 @@ public prefix func ! (operand: some PredicateConvertible) -> Predicate {
 
 // MARK: - Column-to-column comparisons (correlated subqueries and joins)
 
+/// Column-to-column equality — the join-condition shape: `c.postID == p.id`.
 public func == <V: ColumnCodable & Equatable>(lhs: Column<V>, rhs: Column<V>) -> Predicate {
     Predicate(expression: .infix("=", lhs.expression, rhs.expression))
 }
 
+/// Column-to-column inequality.
 public func != <V: ColumnCodable & Equatable>(lhs: Column<V>, rhs: Column<V>) -> Predicate {
     Predicate(expression: .infix("<>", lhs.expression, rhs.expression))
 }
@@ -176,6 +189,7 @@ extension Query {
 // MARK: - Pattern matching
 
 extension Column where Value == String {
+    /// `column LIKE pattern` — `%` and `_` are the wildcards.
     public func like(_ pattern: String) -> Predicate {
         Predicate(expression: .infix("LIKE", expression, .bind(SQLBind(pattern))))
     }
@@ -187,10 +201,12 @@ extension Column where Value == String {
 }
 
 extension Column where Value == String? {
+    /// `column LIKE pattern` — `%` and `_` are the wildcards.
     public func like(_ pattern: String) -> Predicate {
         Predicate(expression: .infix("LIKE", expression, .bind(SQLBind(pattern))))
     }
 
+    /// `column ILIKE pattern` — Postgres's case-insensitive LIKE.
     public func ilike(_ pattern: String) -> Predicate {
         Predicate(expression: .infix("ILIKE", expression, .bind(SQLBind(pattern))))
     }

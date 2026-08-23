@@ -73,9 +73,12 @@ where
 public protocol PostgresEnum: RawRepresentable, ColumnCodable where RawValue == String {}
 
 extension PostgresEnum {
+    /// `unknown` (OID 705): the server infers the enum type from context.
     public static var psqlType: PostgresDataType { .unknownOID }
+    /// Enum labels travel as text.
     public static var psqlFormat: PostgresFormat { .text }
 
+    /// Writes the case's raw label.
     public func encode<JSONEncoder: PostgresJSONEncoder>(
         into byteBuffer: inout ByteBuffer,
         context: PostgresEncodingContext<JSONEncoder>
@@ -83,6 +86,8 @@ extension PostgresEnum {
         byteBuffer.writeString(rawValue)
     }
 
+    /// Reads a label and matches it to a case; an unknown label throws
+    /// `HangarError.invalidEnumValue` naming both.
     public init<JSONDecoder: PostgresJSONDecoder>(
         from byteBuffer: inout ByteBuffer,
         type: PostgresDataType,
@@ -139,11 +144,13 @@ public struct SQLBind: Sendable {
     }
 
     @inlinable
+    /// Binds one value as a `$n` parameter.
     public init<V: ColumnCodable>(_ value: V) {
         self.init { try $0.append(value) }
     }
 
     @inlinable
+    /// Binds an optional value; nil binds SQL NULL.
     public init<V: ColumnCodable>(_ value: V?) {
         self.init { try $0.append(value) }
     }
@@ -157,6 +164,7 @@ public struct SQLBind: Sendable {
         }
     }
 
+    /// The optional `@JSONB` bind; nil binds SQL NULL.
     public init<V: Encodable & Sendable>(jsonb value: V?) {
         if let value {
             self.init(jsonb: value)
@@ -182,12 +190,15 @@ enum JSONCoders {
 /// expansion and are public only for that reason — they are not user API.
 
 @inlinable
+/// Called by `@Entity`'s generated decoder — not user API.
 public func _checkColumnCount(_ count: Int, expected: Int, table: String) throws {
     guard count == expected else {
         throw HangarError.columnCountMismatch(table: table, expected: expected, got: count)
     }
 }
 
+/// Called by `@Entity`'s generated decoder — not user API. Wraps a
+/// cell decode failure with the table and column it happened on.
 public func _decodeColumn<V: PostgresDecodable>(
     _ type: V.Type,
     from cell: PostgresCell,
@@ -201,6 +212,7 @@ public func _decodeColumn<V: PostgresDecodable>(
     }
 }
 
+/// Called by `@Entity`'s generated decoder — not user API.
 public func _decodeJSONB<V: Decodable>(
     _ type: V.Type,
     from cell: PostgresCell,
@@ -215,6 +227,7 @@ public func _decodeJSONB<V: Decodable>(
     return value
 }
 
+/// Called by `@Entity`'s generated decoder — not user API.
 public func _decodeOptionalJSONB<V: Decodable>(
     _ type: V.Type,
     from cell: PostgresCell,

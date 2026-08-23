@@ -31,10 +31,13 @@ extension Repo {
     /// connection — use it, not the outer repo, for everything inside, or
     /// the work runs outside the transaction.
     ///
-    /// - Parameter isolation: applied to the outermost `BEGIN`
-    ///   (`BEGIN ISOLATION LEVEL SERIALIZABLE`); ignored on nested calls,
-    ///   because Postgres ties isolation to the whole transaction and a
-    ///   savepoint cannot change it.
+    /// - Parameters:
+    ///   - isolation: applied to the outermost `BEGIN`
+    ///     (`BEGIN ISOLATION LEVEL SERIALIZABLE`); ignored on nested calls,
+    ///     because Postgres ties isolation to the whole transaction and a
+    ///     savepoint cannot change it.
+    ///   - body: the transactional work, handed a `Repo` bound to the
+    ///     transaction's connection.
     public func transaction<T: Sendable>(
         isolation: IsolationLevel? = nil,
         _ body: (Repo) async throws -> T

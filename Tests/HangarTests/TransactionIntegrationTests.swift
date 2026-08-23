@@ -143,7 +143,7 @@ struct ConnectionBoundRepoTests {
         let config = try TestDatabase.clientConfiguration()
         var connectionConfig = PostgresConnection.Configuration(
             host: config.host ?? "127.0.0.1", port: config.port ?? 5432,
-            username: config.username ?? "postgres", password: config.password,
+            username: config.username, password: config.password,
             database: config.database, tls: .disable)
         connectionConfig.options.connectTimeout = .seconds(10)
         let connection = try await PostgresConnection.connect(

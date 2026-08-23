@@ -152,6 +152,9 @@ extension Aliased {
     }
 
     /// Left join from an aliased base.
+    /// Left-joins another table onto an already-composed query;
+    /// accumulated conditions, ordering, limits, and preloads carry over.
+    /// Left join against an aliased table.
     public func leftJoin<B: Table>(
         _ other: Aliased<B>,
         on condition: (T.QueryColumns, B.QueryColumns) -> Predicate
@@ -188,6 +191,7 @@ extension Query {
         joined(.inner, .aliased(other), condition)
     }
 
+    /// Left-joins another table onto an already-composed query.
     public func leftJoin<B: Table>(
         _ other: B.Type,
         on condition: (Model.QueryColumns, B.QueryColumns) -> Predicate
@@ -231,6 +235,7 @@ extension Query {
 // MARK: - Composition (two-column-set closures)
 
 extension JoinedQuery {
+    /// ANDs a condition over both tables onto the join.
     public func `where`(
         _ build: (A.QueryColumns, B.QueryColumns) -> some PredicateConvertible
     ) -> JoinedQuery<A, B, Result> {
@@ -244,6 +249,7 @@ extension JoinedQuery {
         return next
     }
 
+    /// Appends an ordering term; columns render table-qualified.
     public func order(
         _ build: (A.QueryColumns, B.QueryColumns) -> OrderTerm
     ) -> JoinedQuery<A, B, Result> {
@@ -252,6 +258,7 @@ extension JoinedQuery {
         return next
     }
 
+    /// Appends a GROUP BY column from either table.
     public func groupBy<V>(
         _ build: (A.QueryColumns, B.QueryColumns) -> Column<V>
     ) -> JoinedQuery<A, B, Result> {
@@ -260,6 +267,7 @@ extension JoinedQuery {
         return next
     }
 
+    /// ANDs a HAVING condition — the post-grouping filter.
     public func having(
         _ build: (A.QueryColumns, B.QueryColumns) -> some PredicateConvertible
     ) -> JoinedQuery<A, B, Result> {
@@ -273,18 +281,22 @@ extension JoinedQuery {
         return next
     }
 
+    /// At most `count` rows; a later call replaces an earlier one.
     public func limit(_ count: Int) -> JoinedQuery<A, B, Result> {
         var next = self
         next.rowLimit = count
         return next
     }
 
+    /// Skips `count` rows; pair with `order` for stable pagination.
     public func offset(_ count: Int) -> JoinedQuery<A, B, Result> {
         var next = self
         next.rowOffset = count
         return next
     }
 
+    /// `SELECT DISTINCT` — collapses join fan-out to distinct rows.
+    /// Last-call-wins with `distinct(on:)`.
     public func distinct() -> JoinedQuery<A, B, Result> {
         var next = self
         next.isDistinct = true
@@ -540,6 +552,8 @@ extension Repo {
         return models
     }
 
+    /// Runs a projected joined query, decoding each row as its `.select`
+    /// shape.
     public func all<A, B, R>(_ query: JoinedQuery<A, B, R>) async throws -> [R] {
         guard let selection = query.selection else {
             throw HangarError.invalidProjection(
@@ -557,6 +571,7 @@ extension Repo {
         return results
     }
 
+    /// At most one base-entity row; more than one throws `tooManyRows`.
     public func one<A: Table, B: Table>(_ query: JoinedQuery<A, B, A>) async throws -> A? {
         let results = try await all(query.limit(2))
         guard results.count <= 1 else {
@@ -565,6 +580,7 @@ extension Repo {
         return results.first
     }
 
+    /// At most one projected row; more than one throws `tooManyRows`.
     public func one<A, B, R>(_ query: JoinedQuery<A, B, R>) async throws -> R? {
         let results: [R] = try await all(query.limit(2))
         guard results.count <= 1 else {

@@ -32,6 +32,8 @@ public enum DynamicFilterValue: Sendable, Equatable, Decodable {
     case double(Double)
     case string(String)
 
+    /// Decodes from JSON's own scalar shapes: null, bool, number, string —
+    /// integers preferred over doubles where both parse.
     public init(from decoder: any Decoder) throws {
         let container = try decoder.singleValueContainer()
         if container.decodeNil() {
@@ -56,10 +58,15 @@ public enum DynamicFilterValue: Sendable, Equatable, Decodable {
 extension DynamicFilterValue: ExpressibleByStringLiteral, ExpressibleByIntegerLiteral,
     ExpressibleByBooleanLiteral, ExpressibleByFloatLiteral, ExpressibleByNilLiteral
 {
+    /// A string literal is a `.string` filter value.
     public init(stringLiteral value: String) { self = .string(value) }
+    /// An integer literal is an `.int` filter value.
     public init(integerLiteral value: Int) { self = .int(value) }
+    /// A boolean literal is a `.bool` filter value.
     public init(booleanLiteral value: Bool) { self = .bool(value) }
+    /// A float literal is a `.double` filter value.
     public init(floatLiteral value: Double) { self = .double(value) }
+    /// `nil` is the `.null` filter value.
     public init(nilLiteral: ()) { self = .null }
 }
 
@@ -71,6 +78,7 @@ public protocol DynamicFilterConvertible: ColumnCodable, Equatable {
 }
 
 extension String: DynamicFilterConvertible {
+    /// A `.string` value, verbatim.
     public static func fromDynamicFilter(_ value: DynamicFilterValue) -> String? {
         if case .string(let string) = value { return string }
         return nil
@@ -78,6 +86,7 @@ extension String: DynamicFilterConvertible {
 }
 
 extension Int: DynamicFilterConvertible {
+    /// An `.int` value, verbatim.
     public static func fromDynamicFilter(_ value: DynamicFilterValue) -> Int? {
         if case .int(let int) = value { return int }
         return nil
@@ -85,6 +94,7 @@ extension Int: DynamicFilterConvertible {
 }
 
 extension Double: DynamicFilterConvertible {
+    /// A `.double`, or an `.int` widened — JSON doesn't distinguish 3 from 3.0.
     public static func fromDynamicFilter(_ value: DynamicFilterValue) -> Double? {
         switch value {
         case .double(let double): return double
@@ -95,6 +105,7 @@ extension Double: DynamicFilterConvertible {
 }
 
 extension Bool: DynamicFilterConvertible {
+    /// A `.bool` value, verbatim.
     public static func fromDynamicFilter(_ value: DynamicFilterValue) -> Bool? {
         if case .bool(let bool) = value { return bool }
         return nil
@@ -102,6 +113,7 @@ extension Bool: DynamicFilterConvertible {
 }
 
 extension UUID: DynamicFilterConvertible {
+    /// A `.string` parsed as a UUID; a malformed one is a type mismatch, not a crash.
     public static func fromDynamicFilter(_ value: DynamicFilterValue) -> UUID? {
         if case .string(let string) = value { return UUID(uuidString: string) }
         return nil
@@ -109,6 +121,7 @@ extension UUID: DynamicFilterConvertible {
 }
 
 extension Date: DynamicFilterConvertible {
+    /// A `.string` parsed as ISO 8601.
     public static func fromDynamicFilter(_ value: DynamicFilterValue) -> Date? {
         if case .string(let string) = value {
             return try? Date(string, strategy: .iso8601)
@@ -121,6 +134,7 @@ extension Date: DynamicFilterConvertible {
 /// `extension Status: DynamicFilterConvertible {}` — the label string maps
 /// through `init(rawValue:)`.
 extension DynamicFilterConvertible where Self: PostgresEnum {
+    /// The enum's label string, through `init(rawValue:)`.
     public static func fromDynamicFilter(_ value: DynamicFilterValue) -> Self? {
         if case .string(let string) = value { return Self(rawValue: string) }
         return nil
@@ -134,6 +148,8 @@ extension DynamicFilterConvertible where Self: PostgresEnum {
 public struct AnyColumn<M: Table>: Sendable {
     let predicate: @Sendable (_ field: String, _ value: DynamicFilterValue) throws -> Predicate
 
+    /// Allowlists one column by its typed keypath — the compile-checked
+    /// half of the dynamic-filter contract.
     public init<V: DynamicFilterConvertible>(_ keyPath: KeyPath<M, V> & Sendable) {
         self.predicate = { field, value in
             guard let column = M.columnName(for: keyPath) else {
@@ -189,6 +205,9 @@ extension DynamicallyFilterable {
 }
 
 extension Query where Model: DynamicallyFilterable {
+    /// ANDs each allowlisted filter onto this query, in sorted-field order
+    /// so the rendered SQL is deterministic. An unknown field throws —
+    /// never interpolated, never silently ignored.
     public func `where`(
         dynamic filters: [String: DynamicFilterValue]
     ) throws -> Query<Model, Result> {

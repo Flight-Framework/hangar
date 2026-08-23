@@ -4,7 +4,7 @@ Nesting, savepoints, and the one thing you must tell a connection-bound repo.
 
 ## Overview
 
-``Repo/transaction(_:)`` runs a body inside a transaction. Returning commits;
+``Repo/transaction(isolation:_:)`` runs a body inside a transaction. Returning commits;
 throwing rolls back:
 
 ```swift
@@ -68,13 +68,54 @@ let repo = Repo(connection: connection)
 ``Repo/isInTransaction`` reports what the repo believes, which is a useful
 thing to assert in an integration's tests.
 
-## What is missing
+## Isolation levels and retry
 
-There is no escape hatch for running arbitrary SQL *inside* a transaction —
-`SET LOCAL`, an advisory lock, `SELECT … FOR UPDATE`, DDL. The transaction's
-connection is not reachable from the body, so those are currently out of
-reach. This is a known gap.
+The level rides on the outermost `BEGIN` — nested calls are savepoints and
+cannot change it:
 
-There is also no isolation-level control; every transaction runs at the server
-default. `SERIALIZABLE` with retry-on-40001 is the standard answer for
-write-skew, and it is not expressible yet.
+```swift
+try await repo.transaction(isolation: .serializable) { tx in ... }
+```
+
+Under `SERIALIZABLE`, concurrent conflicting transactions fail with SQLSTATE
+`40001` — that is the isolation level working as designed, and the remedy is
+to run the whole transaction again:
+
+```swift
+try await repo.transaction(
+    isolation: .serializable, retryingOnSerializationFailure: 3
+) { tx in ... }
+```
+
+The body must be safe to run more than once; side effects outside the
+database do not roll back, so keep them out of retried bodies.
+
+## Raw SQL on the transaction's connection
+
+``Repo/execute(_:)`` runs one statement under `SQLFragment`'s interpolation
+rules — literals become SQL, values become binds, only `\(raw:)` can smuggle
+text. Inside `transaction { }` it runs on **that transaction's connection**,
+which is what `SET LOCAL`, advisory locks, and DDL need:
+
+```swift
+try await repo.transaction { tx in
+    try await tx.execute("SET LOCAL statement_timeout = \(raw: "'5s'")")
+    try await tx.execute("SELECT pg_advisory_xact_lock(\(42))")
+    ...
+}
+```
+
+## Row locks
+
+`FOR UPDATE` is first-class, not raw SQL — typed, discoverable, and routed
+to the primary:
+
+```swift
+try await repo.transaction { tx in
+    let account = try await tx.one(Account.where { $0.id == id }.lockForUpdate())
+    // the row is ours until commit
+}
+```
+
+A lock composed before a join carries through; `count` strips it (counting
+must not lock); bulk writes refuse it — they take their own locks.

@@ -25,10 +25,12 @@ extension Query {
 }
 
 extension JoinedQuery {
+    /// The SQL with `$n` placeholders — for logging and tests.
     public var debugSQL: String {
         (try? SQLRenderer.select(self).sql) ?? "<invalid join: \(A.self) ⋈ \(B.self)>"
     }
 
+    /// The rendered statement with its binds applied — what `Repo` sends.
     public func renderedQuery() throws -> PostgresQuery {
         if let invalid = selection?.invalid { throw invalid }
         return try SQLRenderer.select(self).postgresQuery()

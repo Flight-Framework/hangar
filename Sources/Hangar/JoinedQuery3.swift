@@ -136,6 +136,7 @@ extension JoinedQuery {
 // MARK: - Composition (three-column-set closures)
 
 extension JoinedQuery3 {
+    /// ANDs a condition over all three tables onto the join.
     public func `where`(
         _ build: (A.QueryColumns, B.QueryColumns, C.QueryColumns) -> some PredicateConvertible
     ) -> JoinedQuery3<A, B, C, Result> {
@@ -149,6 +150,7 @@ extension JoinedQuery3 {
         return next
     }
 
+    /// Appends an ordering term; columns render table-qualified.
     public func order(
         _ build: (A.QueryColumns, B.QueryColumns, C.QueryColumns) -> OrderTerm
     ) -> JoinedQuery3<A, B, C, Result> {
@@ -157,6 +159,7 @@ extension JoinedQuery3 {
         return next
     }
 
+    /// Appends a GROUP BY column from any of the three tables.
     public func groupBy<V>(
         _ build: (A.QueryColumns, B.QueryColumns, C.QueryColumns) -> Column<V>
     ) -> JoinedQuery3<A, B, C, Result> {
@@ -165,6 +168,7 @@ extension JoinedQuery3 {
         return next
     }
 
+    /// ANDs a HAVING condition — the post-grouping filter.
     public func having(
         _ build: (A.QueryColumns, B.QueryColumns, C.QueryColumns) -> some PredicateConvertible
     ) -> JoinedQuery3<A, B, C, Result> {
@@ -178,18 +182,22 @@ extension JoinedQuery3 {
         return next
     }
 
+    /// At most `count` rows; a later call replaces an earlier one.
     public func limit(_ count: Int) -> JoinedQuery3<A, B, C, Result> {
         var next = self
         next.rowLimit = count
         return next
     }
 
+    /// Skips `count` rows; pair with `order` for stable pagination.
     public func offset(_ count: Int) -> JoinedQuery3<A, B, C, Result> {
         var next = self
         next.rowOffset = count
         return next
     }
 
+    /// `SELECT DISTINCT` — collapses join fan-out to distinct rows.
+    /// Last-call-wins with `distinct(on:)`.
     public func distinct() -> JoinedQuery3<A, B, C, Result> {
         var next = self
         next.isDistinct = true
@@ -425,6 +433,8 @@ extension Repo {
         return models
     }
 
+    /// Runs a projected three-table query, decoding each row as its
+    /// `.select` shape.
     public func all<A, B, C, R>(_ query: JoinedQuery3<A, B, C, R>) async throws -> [R] {
         guard let selection = query.selection else {
             throw HangarError.invalidProjection(
@@ -444,6 +454,7 @@ extension Repo {
         return results
     }
 
+    /// At most one base-entity row; more than one throws `tooManyRows`.
     public func one<A: Table, B: Table, C: Table>(
         _ query: JoinedQuery3<A, B, C, A>
     ) async throws -> A? {
@@ -454,6 +465,7 @@ extension Repo {
         return results.first
     }
 
+    /// At most one projected row; more than one throws `tooManyRows`.
     public func one<A, B, C, R>(_ query: JoinedQuery3<A, B, C, R>) async throws -> R? {
         let results: [R] = try await all(query.limit(2))
         guard results.count <= 1 else {

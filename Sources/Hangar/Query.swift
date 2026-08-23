@@ -49,20 +49,24 @@ extension Table {
     /// The unfiltered query: `repo.all(Post.all)`.
     public static var all: Query<Self, Self> { Query() }
 
+    /// `Self.where { }` — sugar for `all.where { }`.
     public static func `where`(
         _ build: (QueryColumns) -> some PredicateConvertible
     ) -> Query<Self, Self> {
         all.where(build)
     }
 
+    /// `Self.order { }` — sugar for `all.order { }`.
     public static func order(_ build: (QueryColumns) -> OrderTerm) -> Query<Self, Self> {
         all.order(build)
     }
 
+    /// `Self.limit(n)` — sugar for `all.limit(n)`.
     public static func limit(_ count: Int) -> Query<Self, Self> {
         all.limit(count)
     }
 
+    /// `Self.select { }` — sugar for `all.select { }`.
     public static func select<each S: Selectable>(
         _ build: (QueryColumns) -> (repeat each S)
     ) -> Query<Self, (repeat (each S).Value)>
@@ -70,6 +74,7 @@ extension Table {
         all.select(build)
     }
 
+    /// `Self.select(into:)` — sugar for `all.select(into:)`.
     public static func select<T: Decodable & Sendable, Fields>(
         into type: T.Type,
         _ build: (QueryColumns) -> Fields
@@ -77,6 +82,7 @@ extension Table {
         all.select(into: type, build)
     }
 
+    /// `Self.groupBy { }` — sugar for `all.groupBy { }`.
     public static func groupBy<V>(_ build: (QueryColumns) -> Column<V>) -> Query<Self, Self> {
         all.groupBy(build)
     }
@@ -131,6 +137,7 @@ extension Query {
         return next
     }
 
+    /// At most `count` rows; a later call replaces an earlier one.
     public func limit(_ count: Int) -> Query<Model, Result> {
         var next = self
         next.rowLimit = count
@@ -267,6 +274,7 @@ extension Query {
             })
     }
 
+    /// Skips `count` rows; pair with `order` for stable pagination.
     public func offset(_ count: Int) -> Query<Model, Result> {
         var next = self
         next.rowOffset = count

@@ -14,7 +14,7 @@ struct PreloadRendererTests {
         query.predicate = Predicate(
             expression: .anyOf(
                 .column(table: "hangar_posts", name: "author_id"),
-                .bind(SQLBind { try $0.append([UUID(), UUID()]) })))
+                .bind(SQLBind { $0.append([UUID(), UUID()]) })))
         let statement = SQLRenderer.select(query)
         #expect(statement.sql.hasSuffix(#"WHERE ("author_id" = ANY($1))"#))
         #expect(statement.binds.count == 1)

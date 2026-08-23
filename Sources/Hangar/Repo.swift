@@ -31,6 +31,7 @@ public struct Repo: Sendable {
     /// own per-query debug line; `nil` disables both.
     let logger: Logger?
 
+    /// A repo over one client — every read and write goes to it.
     public init(client: PostgresClient, logger: Logger? = nil) {
         self.backend = .client(primary: client, replica: nil)
         self.logger = logger
@@ -135,6 +136,7 @@ public struct Repo: Sendable {
         return models.first
     }
 
+    /// At most one projected row; more than one throws `tooManyRows`.
     public func one<M, R>(_ query: Query<M, R>) async throws -> R? {
         let results: [R] = try await all(query.limit(2))
         guard results.count <= 1 else {
@@ -199,6 +201,8 @@ public struct Repo: Sendable {
         try await scalar(Int.self, for: SQLRenderer.count(query), table: M.schema.name, operation: "count")
     }
 
+    /// Whether any row matches — honoring grouping, having, and distinct,
+    /// which can each empty an otherwise-matching set.
     public func exists<M, R>(_ query: Query<M, R>) async throws -> Bool {
         try await scalar(Bool.self, for: SQLRenderer.exists(query), table: M.schema.name, operation: "exists")
     }
