@@ -8,6 +8,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Bulk `update(query, set:)`.** One statement across every matching row,
+  with typed, bound assignments and the row count returned:
+  `repo.update(Post.where { $0.published == false }) { ($0.published.set(to: true)) }`.
+  Same clause rules as bulk delete.
 - **Bulk `delete(query)`.** `repo.delete(Session.where { $0.expiresAt < .now })`
   deletes every matching row in one statement and returns the count. A query
   carrying a clause DELETE cannot honor — LIMIT, ORDER BY, GROUP BY, HAVING,

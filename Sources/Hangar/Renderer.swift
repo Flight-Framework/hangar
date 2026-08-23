@@ -312,6 +312,29 @@ enum SQLRenderer {
         return RenderedStatement(sql: sql, binds: writer.binds)
     }
 
+    /// `UPDATE ... SET ... WHERE <predicate> RETURNING <pk>` — the same
+    /// values written to every row the predicate matches.
+    ///
+    /// The same clause rules as bulk delete: only the predicate
+    /// participates, and a query carrying anything UPDATE cannot honor
+    /// throws rather than silently dropping it.
+    static func update<M: Table, R>(
+        _ query: Query<M, R>, set assignments: [ColumnAssignment]
+    ) throws -> RenderedStatement {
+        try checkBulkWritable(query, operation: "update")
+        guard !assignments.isEmpty else {
+            throw HangarError.noUpdatableColumns(table: M.schema.name)
+        }
+        var writer = BindWriter()
+        let sets = assignments
+            .map { "\(quote($0.name)) = \(render($0.expression, writer: &writer))" }
+            .joined(separator: ", ")
+        var sql = "UPDATE \(M.schema.quotedName) SET \(sets)"
+        appendWhere(query.predicate, to: &sql, writer: &writer)
+        sql += " RETURNING \(M.schema.primaryKey[0].quotedName)"
+        return RenderedStatement(sql: sql, binds: writer.binds)
+    }
+
     /// Rejects query clauses a bulk write cannot express. Postgres has no
     /// `DELETE ... LIMIT` or `UPDATE ... ORDER BY`; honoring the WHERE while
     /// ignoring the rest would be a silent wrong answer of exactly the kind

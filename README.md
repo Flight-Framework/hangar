@@ -112,8 +112,21 @@ try await repo.stream(Post.all.order { $0.id.asc() }) { posts in
 }
 ```
 
-**Changesets**, upserts, dynamic filters over an explicit allowlist, and
-read-replica routing.
+**Bulk writes** — one statement across every row a predicate matches, with
+the count returned and typed, bound assignments:
+
+```swift
+try await repo.delete(Session.where { $0.expiresAt < .now })
+try await repo.update(Post.where { $0.published == false }) {
+    ($0.published.set(to: true), $0.reviewedAt.set(to: Date()))
+}
+```
+
+A query carrying a clause the statement cannot honor — `limit`, `order`,
+`groupBy` — throws rather than executing with it silently dropped.
+
+**Changesets**, upserts, dynamic filters over an explicit allowlist, array
+columns (`text[]`, `integer[]`, ...), and read-replica routing.
 
 ## Safety
 
@@ -149,14 +162,13 @@ let repo = Repo(connection: connection)
 
 ## What is not here
 
-No migrations — use a migration tool. No bulk `update(query, set:)` yet
-(bulk `delete(query)` exists). No CTEs, no `DISTINCT ON`, no three-table
-joins or self-joins, no `@HasMany(through:)`, no transaction isolation
-levels, and no escape hatch for running arbitrary SQL *inside* a
+No migrations — use a migration tool. No CTEs, no `DISTINCT ON`, no
+three-table joins or self-joins, no `@HasMany(through:)`, no transaction
+isolation levels, and no escape hatch for running arbitrary SQL *inside* a
 `transaction { }`.
 
-Those are real gaps rather than statements of principle. The ones most likely
-to bite are bulk update and the in-transaction escape hatch.
+Those are real gaps rather than statements of principle. The one most likely
+to bite is the in-transaction escape hatch.
 
 ## Documentation
 

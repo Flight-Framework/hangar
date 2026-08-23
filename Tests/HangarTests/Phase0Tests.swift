@@ -197,3 +197,94 @@ extension PostgresIntegrationSuite {
         }
     }
 }
+
+// MARK: - Bulk update
+
+@Suite("Bulk update — SQL")
+struct BulkUpdateRendererTests {
+
+    @Test("update(query, set:) renders UPDATE ... SET ... WHERE ... RETURNING pk")
+    func rendersPredicateUpdate() throws {
+        let statement = try SQLRenderer.update(
+            Post.where { $0.published == false },
+            set: [
+                Post.queryColumns.published.set(to: true)._assignment,
+                Post.queryColumns.viewCount.set(to: 0)._assignment,
+            ])
+        #expect(
+            statement.sql
+                == #"UPDATE "hangar_posts" SET "published" = $1, "view_count" = $2 WHERE ("published" = $3) RETURNING "id""#)
+        #expect(statement.binds.count == 3)
+    }
+
+    @Test("setting an optional column to nil writes SQL NULL through a bind")
+    func nilAssignment() throws {
+        let statement = try SQLRenderer.update(
+            Post.all,
+            set: [Post.queryColumns.nickname.set(to: nil)._assignment])
+        #expect(statement.sql == #"UPDATE "hangar_posts" SET "nickname" = $1 RETURNING "id""#)
+    }
+
+    @Test("an empty SET throws rather than rendering UPDATE ... SET nothing")
+    func emptySetRefused() {
+        #expect(throws: HangarError.self) {
+            _ = try SQLRenderer.update(Post.all, set: [])
+        }
+    }
+
+    @Test("clauses UPDATE cannot honor are refused, same rule as bulk delete")
+    func refusesUnsupportedClauses() {
+        #expect(throws: HangarError.self) {
+            _ = try SQLRenderer.update(
+                Post.all.limit(3),
+                set: [Post.queryColumns.published.set(to: true)._assignment])
+        }
+    }
+}
+
+extension PostgresIntegrationSuite {
+    @Suite("Bulk update (real Postgres)")
+    struct BulkUpdateIntegrationTests {
+
+        @Test("one statement writes the matching rows and reports the count")
+        func bulkUpdate() async throws {
+            try await withRepo { repo in
+                for i in 1...3 {
+                    var draft = Post.sample(title: "draft-\(i)")
+                    draft.published = false
+                    try await repo.insert(draft)
+                }
+                try await repo.insert(Post.sample(title: "already-live"))
+
+                let published = try await repo.update(Post.where { $0.published == false }) {
+                    ($0.published.set(to: true), $0.nickname.set(to: "batch"))
+                }
+                #expect(published == 3)
+                #expect(try await repo.count(Post.where { $0.published == false }) == 0)
+
+                // The already-published row was outside the predicate: untouched.
+                let untouched = try await repo.one(Post.where { $0.title == "already-live" })
+                #expect(untouched?.nickname != "batch")
+
+                // Zero matches is an answer, not an error.
+                let none = try await repo.update(Post.where { $0.title == "no-such" }) {
+                    ($0.published.set(to: false))
+                }
+                #expect(none == 0)
+            }
+        }
+
+        @Test("arity 1: a single assignment needs no tuple ceremony")
+        func singleAssignment() async throws {
+            try await withRepo { repo in
+                try await repo.insert(Post.sample(title: "solo"))
+                let count = try await repo.update(Post.all) {
+                    $0.nickname.set(to: nil)
+                }
+                #expect(count == 1)
+                let row = try await repo.one(Post.all)
+                #expect(row?.nickname == nil)
+            }
+        }
+    }
+}

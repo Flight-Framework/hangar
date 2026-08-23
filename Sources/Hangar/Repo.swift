@@ -239,6 +239,41 @@ public struct Repo: Sendable {
         }
     }
 
+    /// Writes the same values to every row the query's predicate matches,
+    /// in one statement. Returns how many rows were written — zero is a
+    /// normal answer, not an error.
+    ///
+    /// ```swift
+    /// let published = try await repo.update(Post.where { $0.published == false }) {
+    ///     ($0.published.set(to: true), $0.reviewedAt.set(to: Date()))
+    /// }
+    /// ```
+    ///
+    /// Assignments are typed against their columns, so assigning the wrong
+    /// type is a compile error; values are always bound parameters. For
+    /// per-row values, fetch and write row by row — this writes one value
+    /// set to the whole match.
+    ///
+    /// - Throws: ``HangarError/bulkWriteClause(table:operation:clause:)``
+    ///   if the query carries a clause UPDATE cannot honor;
+    ///   ``HangarError/noUpdatableColumns(table:)`` for an empty SET.
+    @discardableResult
+    public func update<M: Table, R, each A: Assignable>(
+        _ query: Query<M, R>,
+        set build: (M.QueryColumns) -> (repeat each A)
+    ) async throws -> Int {
+        let built = build(M.queryColumns)
+        var assignments: [ColumnAssignment] = []
+        for assignment in repeat each built {
+            assignments.append(assignment._assignment)
+        }
+        let statement = try SQLRenderer.update(query, set: assignments)
+        let sequence = try await execute(statement.postgresQuery(), intent: .write, operation: "update")
+        var updated = 0
+        for try await _ in sequence { updated += 1 }
+        return updated
+    }
+
     /// Deletes every row the query's predicate matches, in one statement.
     /// Returns how many were deleted — zero is a normal answer, not an
     /// error, because "nothing matched" is a legitimate outcome for a
