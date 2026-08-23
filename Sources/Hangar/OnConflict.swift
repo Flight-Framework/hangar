@@ -1,12 +1,12 @@
-/// Upsert behavior for `repo.insert(changeset, onConflict:)` (design §6.2)
+/// Upsert behavior for `repo.insert(changeset, onConflict:)`
 /// — first-class rather than raw SQL, because `ON CONFLICT` is used
 /// constantly and is painful to express through an escape hatch.
 ///
 /// ```swift
-/// try await repo.insert(changeset, onConflict: .doUpdate(
+/// try await repo.insert(changeset, onConflict:.doUpdate(
 ///     target: [\Post.slug],
 ///     set: [\Post.title, \Post.body]))
-/// try await repo.insert(changeset, onConflict: .doNothing)
+/// try await repo.insert(changeset, onConflict:.doNothing)
 /// ```
 ///
 /// Keypaths resolve to column names through the entity's TableModel
@@ -15,7 +15,7 @@
 public struct OnConflict<M: Table>: Sendable {
     enum Action: Sendable {
         case nothing
-        /// `DO UPDATE SET col = EXCLUDED.col, ...`
+        /// `DO UPDATE SET col = EXCLUDED.col,...`
         case update([PartialKeyPath<M> & Sendable])
     }
 
@@ -48,7 +48,7 @@ public struct OnConflict<M: Table>: Sendable {
 }
 
 extension SQLRenderer {
-    /// The `ON CONFLICT ...` clause, or a thrown error for keypaths that
+    /// The `ON CONFLICT...` clause, or a thrown error for keypaths that
     /// aren't columns.
     static func conflictClause<M: Table>(_ conflict: OnConflict<M>) throws -> String {
         func columns(_ keyPaths: [PartialKeyPath<M> & Sendable]) throws -> [String] {

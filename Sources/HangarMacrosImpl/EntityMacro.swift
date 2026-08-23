@@ -2,11 +2,11 @@ import SwiftSyntax
 import SwiftSyntaxBuilder
 import SwiftSyntaxMacros
 
-/// `@Entity("posts")` (design §4): generates `Columns`, table metadata, the
+/// `@Entity("posts")`: generates `Columns`, table metadata, the
 /// positional row decoder, a memberwise initializer, the per-column binding
 /// switch, and the `Table` conformance.
 ///
-/// Built fixtures-first per design §4.4: the assertMacroExpansion fixtures
+/// Built fixtures-first: the assertMacroExpansion fixtures
 /// in HangarMacroTests ARE the specification of this expansion; the design
 /// doc's prose examples are illustrative.
 public struct EntityMacro: MemberMacro, ExtensionMacro {
@@ -22,7 +22,7 @@ public struct EntityMacro: MemberMacro, ExtensionMacro {
         guard let structDecl = declaration.as(StructDeclSyntax.self) else {
             context.diagnoseError(
                 "entity.notstruct",
-                "@Entity can only be attached to a struct — models are values (design §3).",
+                "@Entity can only be attached to a struct — models are values.",
                 at: node)
             return []
         }
@@ -134,7 +134,7 @@ public struct EntityMacro: MemberMacro, ExtensionMacro {
             """
     }
 
-    /// The `Changesets.TableModel` catalog (design §11.2): the keypath →
+    /// The `Changesets.TableModel` catalog: the keypath →
     /// column-name mapping changesets erase through. Names are identical to
     /// the schema's by construction, so `ValidatedChanges` keys always match
     /// what the renderer expects.
@@ -160,7 +160,7 @@ public struct EntityMacro: MemberMacro, ExtensionMacro {
     private static func memberwiseInit(_ members: [ParsedMember], access: String) -> DeclSyntax {
         // The compiler stops synthesizing the memberwise init once the macro
         // adds init(from:), so the macro restores it. Associations default
-        // to .notLoaded so constructing a model never requires naming them.
+        // to.notLoaded so constructing a model never requires naming them.
         let parameters = members
             .map { member in
                 switch member {
@@ -205,7 +205,7 @@ public struct EntityMacro: MemberMacro, ExtensionMacro {
                 lines.append("    self.\(property.identifier) = try \(decode)")
                 cellIndex += 1
             case .association(let association):
-                // Not a column (§4.3): never decoded, populated only by
+                // Not a column: never decoded, populated only by
                 // preload.
                 lines.append("    self.\(association.identifier) = .notLoaded(association: \"\(association.identifier)\")")
             }
@@ -219,7 +219,7 @@ public struct EntityMacro: MemberMacro, ExtensionMacro {
             """
     }
 
-    /// The association registry (design §4, item 4): keypath → loader, with
+    /// The association registry: keypath → loader, with
     /// every key type captured statically at expansion. `parentKey` for
     /// has-many/has-one is this entity's first `@ID` property; `references`
     /// for belongs-to defaults to the related type's `id` (Ecto's

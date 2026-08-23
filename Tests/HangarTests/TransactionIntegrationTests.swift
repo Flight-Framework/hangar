@@ -3,7 +3,7 @@ import Testing
 
 import Hangar
 
-// Phase 2 (design §5.2): transactions, savepoint nesting, RollbackError.
+// Phase 2: transactions, savepoint nesting, RollbackError.
 
 extension PostgresIntegrationSuite {
 @Suite(
@@ -134,7 +134,7 @@ extension PostgresIntegrationSuite {
     .enabled(if: TestDatabase.isConfigured, "set HANGAR_TEST_DATABASE_URL to run"))
 struct ConnectionBoundRepoTests {
 
-    /// The §11 adapter shape: a repo pinned to a caller-managed connection.
+    /// The  adapter shape: a repo pinned to a caller-managed connection.
     @Test("queries and transactions run on the pinned connection")
     func pinnedConnection() async throws {
         // Ensure schema/truncation via the normal harness first.
@@ -157,7 +157,7 @@ struct ConnectionBoundRepoTests {
             let count = try await repo.count(Post.all)
             #expect(count == 1)
 
-            // transaction() on a connection-bound repo opens a REAL
+            // transaction on a connection-bound repo opens a REAL
             // transaction (BEGIN, not a savepoint) on that connection.
             struct Abort: Error {}
             await #expect(throws: Abort.self) {
@@ -169,6 +169,46 @@ struct ConnectionBoundRepoTests {
             }
             let after = try await repo.count(Post.all)
             #expect(after == 1)
+
+            // The bug this guards: a repo bound to a connection that is
+            // ALREADY inside a caller's transaction. Told nothing, it emits a
+            // literal BEGIN/COMMIT — Postgres ignores the redundant BEGIN and
+            // the COMMIT ends the caller's transaction, so work the caller
+            // then rolls back is durable instead.
+            let conn = Logger(label: "hangar.test.conn")
+            _ = try await connection.query("BEGIN", logger: conn)
+            let nested = Repo(connection: connection, inTransaction: true)
+            #expect(nested.isInTransaction, "it must know it is inside one")
+
+            _ = try await nested.transaction { tx in
+                try await tx.insert(Post.sample(title: "should-not-survive"))
+            }
+            // The inner transaction released a savepoint rather than
+            // committing, so the caller's transaction still owns the write.
+            _ = try await connection.query("ROLLBACK", logger: conn)
+            #expect(
+                try await repo.count(Post.all) == 1,
+                "the caller's ROLLBACK must discard work done through a nested repo")
+
+            // The companion: the default is genuinely dangerous in this
+            // position, which is why the parameter exists. Pinning it means
+            // nobody removes the parameter without a red test explaining it.
+            _ = try await connection.query("BEGIN", logger: conn)
+            let unaware = Repo(connection: connection)  // inTransaction: false
+            #expect(!unaware.isInTransaction)
+
+            _ = try await unaware.transaction { tx in
+                try await tx.insert(Post.sample(title: "escapes-the-rollback"))
+            }
+            _ = try await connection.query("ROLLBACK", logger: conn)
+            #expect(
+                try await repo.count(Post.all) == 2,
+                """
+                A repo that does not know it is inside a transaction emits a real \
+                COMMIT, ending the caller's transaction — so this write survives a \
+                ROLLBACK the caller expected to discard it. That is the hazard \
+                `inTransaction:` exists to avoid.
+                """)
 
             let committed = try await repo.transaction { tx in
                 try await tx.insert(Post.sample(title: "kept"))

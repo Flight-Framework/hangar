@@ -40,7 +40,7 @@ public struct JSONBMacro: PeerMacro {
     }
 }
 
-/// `@HasMany`/`@BelongsTo`/`@HasOne` (design §7.1): markers like the
+/// `@HasMany`/`@BelongsTo`/`@HasOne`: markers like the
 /// column attributes — @Entity's expansion reads them and generates the
 /// association registry; their own expansions are empty. Deep validation
 /// (Loadable shape, var-ness, attribute exclusivity) happens in @Entity's

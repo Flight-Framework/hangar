@@ -3,7 +3,7 @@ import Testing
 
 import Hangar
 
-// The §12 pre-Phase-1 vertical slice, grown into the Phase-1 acceptance
+// The  pre-Phase-1 vertical slice, grown into the Phase-1 acceptance
 // suite: macro → AST → renderer → PostgresNIO → decoder, against a real
 // server. Serialized: the tests share fixture tables.
 
@@ -144,7 +144,7 @@ struct IntegrationTests {
         }
     }
 
-    // MARK: Ambient repo (design §5.1)
+    // MARK: Ambient repo
 
     @Test("Repo.with binds the task-local; absence throws a named error")
     func ambientRepo() async throws {

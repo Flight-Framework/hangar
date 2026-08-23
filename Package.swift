@@ -2,6 +2,7 @@
 // Hangar — an Ecto-inspired query layer for Postgres, built directly on
 // PostgresNIO. See hangar-design.md (repo root) and README.md.
 import PackageDescription
+import Foundation
 import CompilerPluginSupport
 
 let package = Package(
@@ -90,3 +91,10 @@ let package = Package(
         ),
     ]
 )
+
+// Documentation tooling only, gated so consumers never resolve it.
+if ProcessInfo.processInfo.environment["HANGAR_BUILD_DOCS"] != nil {
+    package.dependencies.append(
+        .package(url: "https://github.com/swiftlang/swift-docc-plugin", from: "1.3.0")
+    )
+}

@@ -4,19 +4,19 @@ import PostgresNIO
 
 // MARK: - ColumnCodable
 
-/// Any type usable as an `@Entity` column (design §4.2).
+/// Any type usable as an `@Entity` column.
 ///
 /// Named `ColumnCodable`, not the design's `PostgresCodable`, because
 /// PostgresNIO already exports `PostgresCodable` and Hangar re-exports
 /// PostgresNIO — same collision-avoidance logic that renamed `@Table` to
-/// `@Entity` (design §4.0).
+/// `@Entity`.
 ///
 /// It is a thin refinement of PostgresNIO's encoding protocols: conforming a
 /// custom type means implementing PostgresNIO's `encode`/`init(from:)` pair,
 /// nothing Hangar-specific.
 public protocol ColumnCodable: PostgresEncodable, PostgresDecodable, Sendable {}
 
-// The stock column types (design §4.2): primitives, UUID, Date, Data.
+// The stock column types: primitives, UUID, Date, Data.
 // Arrays arrive with Phase 4/5 alongside the operators that make them useful.
 extension Bool: ColumnCodable {}
 extension Int: ColumnCodable {}
@@ -33,8 +33,8 @@ extension Decimal: ColumnCodable {}
 
 // MARK: - PostgresEnum
 
-/// A Swift `String`-raw enum stored as a Postgres `CREATE TYPE ... AS ENUM`
-/// column (design §4.2):
+/// A Swift `String`-raw enum stored as a Postgres `CREATE TYPE... AS ENUM`
+/// column:
 ///
 /// ```swift
 /// enum Status: String, PostgresEnum { case draft, published, archived }
@@ -104,7 +104,7 @@ struct UnknownText: PostgresDynamicTypeEncodable {
 
 /// One bound statement parameter, type-erased. Values are captured at AST
 /// construction and applied to `PostgresBindings` at execution — always as
-/// parameters, never interpolated into SQL (design §9.1).
+/// parameters, never interpolated into SQL.
 public struct SQLBind: Sendable {
     @usableFromInline
     let apply: @Sendable (inout PostgresBindings) throws -> Void

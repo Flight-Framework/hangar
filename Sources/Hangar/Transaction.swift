@@ -1,7 +1,7 @@
 import Logging
 import PostgresNIO
 
-// Transactions (design §5.2). The `Repo` handed to the body is bound to the
+// Transactions. The `Repo` handed to the body is bound to the
 // transaction's connection, so everything inside participates. Throwing
 // rolls back; returning commits. Nested `transaction` calls become
 // savepoints (`SAVEPOINT` / `RELEASE` / `ROLLBACK TO`), never nested
@@ -14,7 +14,7 @@ extension Repo {
         switch backend {
         case .client(let primary, _):
             // One connection leased from the PRIMARY for the whole
-            // transaction — a replica never sees writes (§5.3) — and every
+            // transaction — a replica never sees writes — and every
             // statement in `body` runs on it. The control flow is inlined
             // here (rather than shared with the branch below) so `body` is
             // *called* inside the lease closure, never passed across it —
@@ -76,7 +76,7 @@ struct TransactionControl {
     }
 }
 
-/// Explicit rollback without a failure condition (design §5.2):
+/// Explicit rollback without a failure condition:
 ///
 /// ```swift
 /// throw RollbackError.intentional(reason)

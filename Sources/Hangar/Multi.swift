@@ -1,6 +1,6 @@
 import Changesets
 
-// `Multi` — transaction orchestration with typed keys (design §10).
+// `Multi` — transaction orchestration with typed keys.
 // Steps are values: a Multi can be built conditionally, returned from a
 // function, and passed around before it runs. Later steps see earlier
 // results through the closure parameter; everything runs in one
@@ -9,7 +9,7 @@ import Changesets
 /// A phantom-typed key naming one step's result — the same technique
 /// `Container.resolve` uses: internally results are `[String: any
 /// Sendable]`, and the key makes the subscript cast safe, so the erasure
-/// never surfaces in user code (§10.1).
+/// never surfaces in user code.
 public struct MultiKey<Value: Sendable>: Sendable, CustomStringConvertible {
     public let name: String
 
@@ -113,7 +113,7 @@ public struct Multi: Sendable {
 
     /// A named step with an arbitrary body — its return value lands under
     /// `key`. The body runs inside the Multi's transaction with the
-    /// transaction repo bound as `Repo.current`, so `Repo.require()` inside
+    /// transaction repo bound as `Repo.current`, so `Repo.require` inside
     /// participates in it.
     public func run<T: Sendable>(
         _ key: MultiKey<T>,
@@ -134,7 +134,7 @@ public struct Multi: Sendable {
         }
     }
 
-    /// Appends another Multi's steps after this one's (§10.1: steps are
+    /// Appends another Multi's steps after this one's (: steps are
     /// values, so composition is data manipulation). Name collisions are
     /// caught by `repo.run(multi)`'s duplicate check.
     public func merging(_ other: Multi) -> Multi {
@@ -175,7 +175,7 @@ extension Repo {
                 var values = MultiValues()
                 for step in multi.steps {
                     do {
-                        // Ambient access for `run` steps (§5.1): the
+                        // Ambient access for `run` steps: the
                         // transaction repo is the current repo while a
                         // step executes.
                         let result = try await Repo.with(tx) {

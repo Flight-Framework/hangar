@@ -5,8 +5,8 @@ import Testing
 
 import Hangar
 
-// Phase 5 (§12): query logging and metrics, plus read-replica routing
-// (§5.3). All need a real server; the log/metric assertions ride along on
+// Phase 5: query logging and metrics, plus read-replica routing
+//. All need a real server; the log/metric assertions ride along on
 // real queries.
 
 /// A log handler that records what Hangar emits — shared storage so the
@@ -165,7 +165,7 @@ struct ObservabilityIntegrationTests {
         }
     }
 
-    @Test("reads route to the replica; writes and transactions to the primary (§5.3)")
+    @Test("reads route to the replica; writes and transactions to the primary")
     func replicaRouting() async throws {
         // Two databases in the same server stand in for primary + replica —
         // distinguishable data proves the routing.

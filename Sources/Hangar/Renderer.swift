@@ -36,13 +36,13 @@ struct BindWriter {
 }
 
 /// A subquery's SQL, rendered lazily against the outer statement's writer
-/// (§8): the payoff of owning the AST is that nesting needs no special
+///: the payoff of owning the AST is that nesting needs no special
 /// mechanism beyond sharing the placeholder counter.
 struct SubquerySQL: Sendable {
     let render: @Sendable (inout BindWriter) -> String
 }
 
-/// AST → SQL text + ordered binds (design §2, layer 3). Identifiers are
+/// AST → SQL text + ordered binds (the design, layer 3). Identifiers are
 /// always double-quoted; values are always parameters. Column lists are
 /// always explicit and in schema order — never `*` — which is what lets the
 /// generated decoder consume cells positionally.
@@ -93,24 +93,67 @@ enum SQLRenderer {
         return sql
     }
 
-    /// `SELECT count(*)` over the query's predicate. Ordering, limit, and
-    /// offset are deliberately ignored — `count` answers "how many match".
+    /// `SELECT count(*)` over the query's predicate.
+    ///
+    /// Ordering, limit, and offset are deliberately ignored — `count` answers
+    /// "how many match", and neither reordering nor paginating changes that.
+    ///
+    /// `GROUP BY`, `HAVING`, and `DISTINCT` are **not** ignored: each changes
+    /// what a row *is*, so counting without them answers a different question
+    /// than the one asked. When any is present the query is counted as a
+    /// subquery, which is the only rendering that yields the number of rows
+    /// the equivalent `all` would return.
     static func count<M, R>(_ query: Query<M, R>) -> RenderedStatement {
         var writer = BindWriter()
+        if changesWhatARowIs(query) {
+            let inner = selectText(countableSubquery(of: query), writer: &writer)
+            return RenderedStatement(
+                sql: "SELECT count(*) FROM (\(inner)) AS \(quote("hangar_count"))",
+                binds: writer.binds)
+        }
         var sql = "SELECT count(*) FROM \(M.schema.quotedName)"
         appendWhere(query.predicate, to: &sql, writer: &writer)
         return RenderedStatement(sql: sql, binds: writer.binds)
     }
 
+    /// `SELECT EXISTS (...)`, honoring the same clauses as ``count(_:)``.
+    ///
+    /// A `HAVING` clause can empty an otherwise-matching set, so ignoring it
+    /// would report `true` for a query that returns no rows.
     static func exists<M, R>(_ query: Query<M, R>) -> RenderedStatement {
         var writer = BindWriter()
+        if changesWhatARowIs(query) {
+            let inner = selectText(countableSubquery(of: query), writer: &writer)
+            return RenderedStatement(sql: "SELECT EXISTS (\(inner))", binds: writer.binds)
+        }
         var inner = "SELECT 1 FROM \(M.schema.quotedName)"
         appendWhere(query.predicate, to: &inner, writer: &writer)
         return RenderedStatement(sql: "SELECT EXISTS (\(inner))", binds: writer.binds)
     }
 
-    /// `SELECT 1 FROM ... WHERE ...` for a correlated EXISTS predicate
-    /// (§8): rendered fully qualified, because the inner table's columns
+    /// Whether the query carries a clause that changes what a row is, and so
+    /// changes what counting one means.
+    private static func changesWhatARowIs<M, R>(_ query: Query<M, R>) -> Bool {
+        !query.grouping.isEmpty || query.having != nil || query.isDistinct
+    }
+
+    /// The query stripped of clauses that cannot appear in a counted subquery
+    /// and do not affect the count.
+    ///
+    /// `ORDER BY` is meaningless in this position and Postgres rejects it
+    /// alongside some aggregates. `LIMIT`/`OFFSET` would change the number,
+    /// but `count` answers "how many match", not "how many are on this page".
+    private static func countableSubquery<M, R>(of query: Query<M, R>) -> Query<M, R> {
+        var stripped = query
+        stripped.orderings = []
+        stripped.rowLimit = nil
+        stripped.rowOffset = nil
+        stripped.preloads = []
+        return stripped
+    }
+
+    /// `SELECT 1 FROM... WHERE...` for a correlated EXISTS predicate
+    ///: rendered fully qualified, because the inner table's columns
     /// and the outer query's coexist in one scope.
     static func existsText<M, R>(_ query: Query<M, R>, writer: inout BindWriter) -> String {
         let wasQualified = writer.qualified
@@ -153,7 +196,7 @@ enum SQLRenderer {
         return RenderedStatement(sql: sql, binds: writer.binds)
     }
 
-    // MARK: Changeset statements (design §11.2)
+    // MARK: Changeset statements
     //
     // A changeset's write is *minimal*: only `changedFields` appear in the
     // column list / SET clause. Column order is schema order (filtered), so

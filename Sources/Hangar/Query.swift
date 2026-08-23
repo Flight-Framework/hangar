@@ -1,4 +1,4 @@
-/// An immutable query value (design §3). Every operator returns a new
+/// An immutable query value. Every operator returns a new
 /// `Query`; nothing mutates. `Model` fixes which columns are addressable;
 /// `Result` is what a row decodes to — always `Model` in Phase 1, changed by
 /// `.select {}` when projections arrive (Phase 4).
@@ -7,15 +7,15 @@ public struct Query<Model: Table, Result: Sendable>: Sendable {
     var orderings: [OrderTerm] = []
     var rowLimit: Int?
     var rowOffset: Int?
-    /// Pending association preloads (§7.2), executed by `Repo.all` after
+    /// Pending association preloads, executed by `Repo.all` after
     /// the parent rows decode. Carried on the query, applied only when the
     /// query produces full models.
     var preloads: [PreloadStep<Model>] = []
-    /// GROUP BY expressions and the HAVING predicate (§6.1).
+    /// GROUP BY expressions and the HAVING predicate.
     var grouping: [SQLExpression] = []
     var having: Predicate?
     var isDistinct = false
-    /// Installed by `.select {}` (§6): the SELECT list plus the row
+    /// Installed by `.select {}`: the SELECT list plus the row
     /// decoder for `Result`. Nil means "whole model" — every schema column
     /// in order, decoded by the generated `init(from:)`.
     var selection: Selection<Result>?
@@ -78,12 +78,12 @@ extension Table {
     }
 }
 
-// MARK: - Composition operators (design §3.2 — all pure)
+// MARK: - Composition operators (the design — all pure)
 
 extension Query {
     /// Adds a condition, AND-combined with any existing ones — chained
     /// `where` calls narrow the result, which is what makes conditional
-    /// composition work (design §9).
+    /// composition work.
     public func `where`(
         _ build: (Model.QueryColumns) -> some PredicateConvertible
     ) -> Query<Model, Result> {
@@ -128,14 +128,14 @@ extension Query {
         return next
     }
 
-    /// SELECT DISTINCT (§3.2). `distinctOn` arrives with the join pass.
+    /// SELECT DISTINCT. `distinctOn` arrives with the join pass.
     public func distinct() -> Query<Model, Result> {
         var next = self
         next.isDistinct = true
         return next
     }
 
-    /// Appends a GROUP BY column; chained calls group by several (§6.1).
+    /// Appends a GROUP BY column; chained calls group by several.
     public func groupBy<V>(_ build: (Model.QueryColumns) -> Column<V>) -> Query<Model, Result> {
         var next = self
         next.grouping.append(build(Model.queryColumns).expression)
@@ -143,7 +143,7 @@ extension Query {
     }
 
     /// HAVING over aggregate expressions; chained calls AND-combine:
-    /// `.groupBy { $0.authorID }.having { $0.viewCount.sum() > 100 }`.
+    /// `.groupBy { $0.authorID }.having { $0.viewCount.sum > 100 }`.
     public func having(
         _ build: (Model.QueryColumns) -> some PredicateConvertible
     ) -> Query<Model, Result> {
@@ -157,10 +157,10 @@ extension Query {
         return next
     }
 
-    // MARK: Projections (§6) — select changes Result
+    // MARK: Projections — select changes Result
 
     /// Typed projection of one or more columns/aggregates. This is the
-    /// §6.3 parameter-pack surface — one signature covers every arity:
+    ///  parameter-pack surface — one signature covers every arity:
     ///
     /// ```swift
     /// let ids:   [UUID]           = try await repo.all(Post.select { $0.id })
@@ -190,14 +190,14 @@ extension Query {
             })
     }
 
-    /// Projection into a named `Decodable` type (§6). The closure returns a
+    /// Projection into a named `Decodable` type. The closure returns a
     /// **labeled** tuple; each label becomes the column's SQL alias and the
     /// key the type decodes by:
     ///
     /// ```swift
     /// struct PostCount: Decodable { let authorID: UUID; let posts: Int }
     /// Post.groupBy { $0.authorID }
-    ///     .select(into: PostCount.self) { (authorID: $0.authorID, posts: $0.id.count()) }
+    ///.select(into: PostCount.self) { (authorID: $0.authorID, posts: $0.id.count) }
     /// ```
     public func select<T: Decodable & Sendable, Fields>(
         into type: T.Type,

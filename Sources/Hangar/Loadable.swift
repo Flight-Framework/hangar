@@ -1,11 +1,11 @@
 /// An association's value: either preloaded or explicitly absent-from-this
-///-fetch (design §7.3). The loaded/unloaded distinction is runtime, not
+///-fetch. The loaded/unloaded distinction is runtime, not
 /// compile-time — deliberately: encoding the preload set in the model's
 /// type poisons every signature that touches a model.
 ///
 /// What the type buys instead:
 /// - Accessing an unloaded association **never silently issues a query** —
-///   no lazy loading, no invisible N+1 (§11.1).
+///   no lazy loading, no invisible N+1.
 /// - The failure is deterministic, not data-dependent: a code path that
 ///   forgot a preload fails on its *first* execution, so any test covering
 ///   it catches it.
@@ -34,7 +34,7 @@ public enum Loadable<T: Sendable>: Sendable {
 
     /// Nil if not loaded — for call sites where absence is acceptable.
     /// Note the deliberate conflation this reintroduces for optional-typed
-    /// associations; prefer `get()` where the distinction matters.
+    /// associations; prefer `get` where the distinction matters.
     public var optional: T? {
         if case .loaded(let value) = self { return value }
         return nil

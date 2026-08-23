@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 
-import Hangar
+@testable import Hangar
 
 // Streaming (`repo.stream`) and the schema precomputation behind it — the
 // performance pass's user-visible surface.
@@ -19,9 +19,9 @@ struct SchemaPrecomputationTests {
 
     @Test("identifier quoting still escapes embedded quotes (the slow path)")
     func quotingEscapes() {
-        #expect(SQLRenderer_quoteForTest("plain") == #""plain""#)
-        #expect(SQLRenderer_quoteForTest(#"we"ird"#) == #""we""ird""#)
-        #expect(SQLRenderer_quoteForTest(#"""#) == #""""""#)
+        #expect(SQLRenderer.quote("plain") == #""plain""#)
+        #expect(SQLRenderer.quote(#"we"ird"#) == #""we""ird""#)
+        #expect(SQLRenderer.quote(#"""#) == #""""""#)
     }
 
     @Test("debugSQL exposes the statement without interpolating values")
@@ -98,7 +98,7 @@ struct StreamingIntegrationTests {
         }
     }
 
-    @Test("a duplicate related key no longer traps the process (§7.3)")
+    @Test("a duplicate related key no longer traps the process")
     func duplicateRelatedKeyDoesNotTrap() async throws {
         try await withRepo { repo in
             // Two profiles for one author: @HasOne over a non-unique column

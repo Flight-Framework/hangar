@@ -286,7 +286,7 @@ func roundTripBenchmarks(_ repo: Repo) async throws {
     }
 
     try await measureAsync("named prepared statement, same SQL", iterations: 500) {
-        var rows = try await benchClient.execute(PreparedLookup(id: target.id), logger: nil)
+        let rows = try await benchClient.execute(PreparedLookup(id: target.id), logger: nil)
         for try await row in rows { blackHole(row) }
         blackHole(rows)
     }

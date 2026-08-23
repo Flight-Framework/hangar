@@ -1,6 +1,6 @@
 import PostgresNIO
 
-/// The raw-SQL escape hatch (§12 Phase 5), safe by construction: in
+/// The raw-SQL escape hatch, safe by construction: in
 ///
 /// ```swift
 /// Post.where { p in

@@ -2,16 +2,16 @@ import Logging
 import Metrics
 import PostgresNIO
 
-/// Execution against PostgresNIO (design §5). `Repo` takes a connection
+/// Execution against PostgresNIO. `Repo` takes a connection
 /// source and nothing else — it has no idea what a request, a job, or a
 /// scope is; that's the caller's business, which is what keeps Hangar
-/// Flight-independent (§11).
+/// Flight-independent.
 public struct Repo: Sendable {
     /// Where statements run: the pooled client(s), or — inside
     /// `transaction { }` — the one connection the transaction owns, with
     /// its nesting depth (0 = outermost `BEGIN`, ≥1 = savepoints).
     enum Backend: Sendable {
-        /// `replica` non-nil means reads route there (§5.3); writes and
+        /// `replica` non-nil means reads route there; writes and
         /// transactions always use `primary`.
         case client(primary: PostgresClient, replica: PostgresClient?)
         case transaction(PostgresConnection, depth: Int)
@@ -20,7 +20,7 @@ public struct Repo: Sendable {
     /// Whether a statement reads or writes — what read-replica routing
     /// keys on. Everything inside a `transaction { }` ignores this and
     /// uses the transaction's connection: a read inside a transaction must
-    /// see that transaction's uncommitted writes (§5.3).
+    /// see that transaction's uncommitted writes.
     enum Intent: String, Sendable {
         case read
         case write
@@ -36,7 +36,7 @@ public struct Repo: Sendable {
         self.logger = logger
     }
 
-    /// Read-replica routing (§5.3): `all`/`one`/`count`/`exists`/`stream`
+    /// Read-replica routing: `all`/`one`/`count`/`exists`/`stream`
     /// go to `replica`; writes and everything inside a `transaction` block
     /// go to `primary`. The single-client initializer keeps both pointing
     /// at the same place.
@@ -52,21 +52,46 @@ public struct Repo: Sendable {
 
     /// A repo pinned to one specific connection — for integration layers
     /// that manage connection lifetime themselves (e.g. Flight's
-    /// request-scoped connections, design §11). Every statement runs on
+    /// request-scoped connections, the design). Every statement runs on
     /// this connection; `transaction { }` issues `BEGIN`/`COMMIT` on it
     /// (nesting becomes savepoints as usual), and there is no replica
     /// routing — the connection *is* the destination.
     ///
     /// The caller owns checkout and return; the repo must not outlive the
     /// connection's lease.
-    public init(connection: PostgresConnection, logger: Logger? = nil) {
-        self.backend = .transaction(connection, depth: 0)
+    /// - Parameters:
+    ///   - connection: The connection every statement runs on.
+    ///   - logger: Where statements are logged at debug level. `nil` stays
+    ///     quiet.
+    ///   - inTransaction: Whether `connection` is **already** inside a
+    ///     transaction the caller opened.
+    ///
+    ///     This matters more than it looks. At `false` — the default — the repo
+    ///     believes it is outermost, so `transaction { }` emits a literal
+    ///     `BEGIN`/`COMMIT`. If the connection was already inside someone
+    ///     else's transaction, Postgres warns and ignores the redundant
+    ///     `BEGIN`, and the `COMMIT` then **ends the caller's transaction** —
+    ///     so work the caller intended to roll back becomes durable.
+    ///
+    ///     Pass `true` when handing a connection to this repo from inside an
+    ///     open transaction, as a framework integration binding a
+    ///     request-scoped connection does. `transaction { }` then nests as a
+    ///     savepoint, which is what it should have been.
+    public init(
+        connection: PostgresConnection,
+        inTransaction: Bool = false,
+        logger: Logger? = nil
+    ) {
+        self.backend = .transaction(connection, depth: inTransaction ? 1 : 0)
         self.logger = logger
     }
 
-    /// True for the `Repo` handed to a `transaction { }` body. A
-    /// connection-bound repo (`init(connection:)`) reports false until its
-    /// own `transaction { }` opens one.
+    /// True when this repo is operating inside an open transaction.
+    ///
+    /// That covers the repo handed to a `transaction { }` body, and a
+    /// connection-bound repo constructed with `inTransaction: true`. One at
+    /// the default `inTransaction: false` reports false until its own
+    /// `transaction { }` opens one.
     public var isInTransaction: Bool {
         if case .transaction(_, let depth) = backend { return depth > 0 }
         return false
@@ -75,7 +100,7 @@ public struct Repo: Sendable {
     // MARK: Reads
 
     /// Full-model fetch: decodes rows, then runs the query's preloads
-    /// (§7.2) — one batched query per association, grouped and assigned
+    /// — one batched query per association, grouped and assigned
     /// into each model's `Loadable`.
     public func all<M: Table>(_ query: Query<M, M>) async throws -> [M] {
         var models: [M] = try await rows(for: SQLRenderer.select(query), intent: .read, operation: "select")
@@ -85,7 +110,7 @@ public struct Repo: Sendable {
         return models
     }
 
-    /// Projected fetch (§6): `Result` was changed by `.select {}`, and the
+    /// Projected fetch: `Result` was changed by `.select {}`, and the
     /// selection installed the row decoder for it.
     public func all<M, R>(_ query: Query<M, R>) async throws -> [R] {
         let selection = try validatedSelection(of: query)
@@ -174,7 +199,7 @@ public struct Repo: Sendable {
         try await scalar(Bool.self, for: SQLRenderer.exists(query), table: M.schema.name, operation: "exists")
     }
 
-    // MARK: Writes — always explicit; no dirty tracking, no autoflush (§11.1)
+    // MARK: Writes — always explicit; no dirty tracking, no autoflush
 
     /// Inserts the model and returns it as the database now holds it —
     /// database-generated columns (`@ID(generated: true)`, defaults) are
@@ -183,7 +208,7 @@ public struct Repo: Sendable {
     public func insert<M: Table>(_ model: M) async throws -> M {
         let returned: [M] = try await rows(for: SQLRenderer.insert(model), intent: .write, operation: "insert")
         guard let stored = returned.first else {
-            // INSERT ... RETURNING yields exactly one row; none means a rule
+            // INSERT... RETURNING yields exactly one row; none means a rule
             // or trigger swallowed the write.
             throw HangarError.staleModel(table: M.schema.name)
         }
@@ -214,11 +239,11 @@ public struct Repo: Sendable {
         }
     }
 
-    // MARK: Changeset writes (design §11.2) — minimal, validated
+    // MARK: Changeset writes — minimal, validated
 
     /// Inserts a validated changeset: only its changed fields appear in the
     /// INSERT; every other column falls to its database default. Throws
-    /// `ChangesetValidationError` (from `validatedChanges()`) before
+    /// `ChangesetValidationError` (from `validatedChanges`) before
     /// anything reaches the wire if the changeset is invalid.
     @discardableResult
     public func insert<M: Table>(_ changeset: Changeset<M>) async throws -> M {
@@ -230,7 +255,7 @@ public struct Repo: Sendable {
         return stored
     }
 
-    /// Upsert (§6.2): insert with `ON CONFLICT` behavior. With
+    /// Upsert: insert with `ON CONFLICT` behavior. With
     /// `.doUpdate`, the conflicting row is updated (only the `set` columns,
     /// from the incoming values) and returned. With `.doNothing`, a
     /// conflicting insert is skipped and the result is nil.
@@ -278,7 +303,7 @@ public struct Repo: Sendable {
     /// connection inside `transaction { }` — which is what makes a read
     /// inside a transaction see that transaction's uncommitted writes.
     ///
-    /// Instrumentation lives here so every statement gets it (§12 Phase 5):
+    /// Instrumentation lives here so every statement gets it:
     /// a debug log line with the SQL (placeholders only — values are binds
     /// and never appear), and a `hangar.query.duration` timer dimensioned
     /// by operation. The measured duration is dispatch-to-first-response;
@@ -339,7 +364,7 @@ public struct Repo: Sendable {
     }
 }
 
-// MARK: - Ambient access (design §5.1)
+// MARK: - Ambient access
 
 extension Repo {
     /// Binds `Repo.current` for the duration of `body` — Hangar owns the
@@ -357,7 +382,7 @@ extension Repo {
     /// The ambient repo, or a clear error naming the problem. Task-locals
     /// propagate to structured child tasks (`async let`, task groups) but
     /// **not** across `Task.detached` — and that is correct: a background
-    /// job should not silently join a request's transaction (design §5.1).
+    /// job should not silently join a request's transaction.
     public static func require() throws -> Repo {
         guard let repo = current else {
             throw HangarError.noAmbientRepo

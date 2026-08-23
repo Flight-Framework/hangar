@@ -1,5 +1,5 @@
 /// The expression tree behind predicates. Values are always `SQLBind`
-/// parameters — a value can never become SQL text (design §9.1).
+/// parameters — a value can never become SQL text.
 indirect enum SQLExpression: Sendable {
     /// A column reference. `table` renders only in multi-table scopes
     /// (correlated subqueries, joins) — the writer decides.
@@ -8,23 +8,23 @@ indirect enum SQLExpression: Sendable {
     /// `(lhs op rhs)` — comparison, AND/OR, LIKE/ILIKE.
     case infix(String, SQLExpression, SQLExpression)
     /// `(lhs = ANY(rhs))` — the batched-preload membership test (design
-    /// §7.2): one bound array parameter, however many keys.
+    /// ): one bound array parameter, however many keys.
     case anyOf(SQLExpression, SQLExpression)
-    /// `name(args...)` — aggregates (§6.1) and, later, arbitrary functions.
+    /// `name(args...)` — aggregates and, later, arbitrary functions.
     case function(String, [SQLExpression])
     /// `(operand)::type` — dialect-accommodation casts (integer sum →
     /// bigint, avg → float8). The type string is always Hangar-authored,
     /// never user input.
     case cast(SQLExpression, String)
-    /// `(lhs IN (SELECT ...))` — an uncorrelated subquery (§8). The
+    /// `(lhs IN (SELECT...))` — an uncorrelated subquery. The
     /// rendered inner statement shares the outer writer's placeholder
     /// numbering.
     case inSubquery(SQLExpression, SubquerySQL)
-    /// `EXISTS (SELECT 1 ...)` — a possibly-correlated subquery (§8);
+    /// `EXISTS (SELECT 1...)` — a possibly-correlated subquery;
     /// rendered with qualified column references throughout, since inner
     /// and outer tables coexist in one scope.
     case existsSubquery(SubquerySQL)
-    /// A safe raw fragment (§12 Phase 5): literal SQL text interleaved
+    /// A safe raw fragment: literal SQL text interleaved
     /// with bound values — see `SQLFragment`.
     case fragment([SQLFragment.Part])
     /// `NOT (operand)`
@@ -36,7 +36,7 @@ indirect enum SQLExpression: Sendable {
 /// A boolean SQL expression — what `where` accepts and operators produce.
 /// Deliberately not `Bool`, which is why overloading `&&`/`||` on it resolves
 /// cleanly against the standard library's short-circuiting operators
-/// (design §3.1; the overload question is pinned by PredicateSpikeTests).
+/// (the design; the overload question is pinned by PredicateSpikeTests).
 public struct Predicate: Sendable {
     let expression: SQLExpression
 }
@@ -94,7 +94,7 @@ public func >= <V: ColumnCodable & Comparable>(lhs: Column<V>, rhs: V) -> Predic
     Predicate(expression: .infix(">=", lhs.expression, .bind(SQLBind(rhs))))
 }
 
-// MARK: - Boolean combinators (the §3.1 spike surface)
+// MARK: - Boolean combinators (the spike surface)
 
 public func && (lhs: some PredicateConvertible, rhs: some PredicateConvertible) -> Predicate {
     Predicate(expression: .infix("AND", lhs.predicate.expression, rhs.predicate.expression))
@@ -118,7 +118,7 @@ public func != <V: ColumnCodable & Equatable>(lhs: Column<V>, rhs: Column<V>) ->
     Predicate(expression: .infix("<>", lhs.expression, rhs.expression))
 }
 
-// MARK: - Membership (§8, §9)
+// MARK: - Membership
 
 extension Column where Value: ColumnCodable & PostgresArrayEncodable {
     /// Membership in a value list — rendered `= ANY($1)`: one bound array
@@ -129,7 +129,7 @@ extension Column where Value: ColumnCodable & PostgresArrayEncodable {
 }
 
 extension Column {
-    /// Membership in an uncorrelated subquery (§8) — because a query is a
+    /// Membership in an uncorrelated subquery — because a query is a
     /// value, the inner SELECT nests with no special mechanism, and its
     /// binds share the outer statement's numbering:
     ///
@@ -151,13 +151,13 @@ extension Column {
 }
 
 extension Query {
-    /// This query as a correlated `EXISTS` predicate (§8) — the closure
+    /// This query as a correlated `EXISTS` predicate — the closure
     /// that built it may reference the *outer* query's columns, because a
     /// query is just an expression tree:
     ///
     /// ```swift
     /// Post.where { p in
-    ///     Comment.where { $0.postID == p.id && $0.body != "" }.exists()
+    ///     Comment.where { $0.postID == p.id && $0.body != "" }.exists
     /// }
     /// ```
     ///
@@ -180,7 +180,7 @@ extension Column where Value == String {
         Predicate(expression: .infix("LIKE", expression, .bind(SQLBind(pattern))))
     }
 
-    /// Postgres-only case-insensitive LIKE — first-class per design §1.2.
+    /// Postgres-only case-insensitive LIKE — first-class
     public func ilike(_ pattern: String) -> Predicate {
         Predicate(expression: .infix("ILIKE", expression, .bind(SQLBind(pattern))))
     }

@@ -3,7 +3,7 @@ import Testing
 
 @testable import Hangar
 
-// Changeset → SQL (design §11.2): minimal writes. Only changed fields
+// Changeset → SQL: minimal writes. Only changed fields
 // appear in the column list / SET clause, in schema order regardless of
 // change order.
 

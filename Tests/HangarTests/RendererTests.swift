@@ -3,7 +3,7 @@ import Testing
 
 @testable import Hangar
 
-@Suite("SQL renderer — AST → SQL + ordered binds (design §2, layer 3)")
+@Suite("SQL renderer — AST → SQL + ordered binds")
 struct RendererTests {
 
     private let allColumns =
@@ -24,7 +24,7 @@ struct RendererTests {
         #expect(statement.binds.count == 2)
     }
 
-    @Test("chained where calls AND-combine (design §9 conditional composition)")
+    @Test("chained where calls AND-combine")
     func chainedWhere() {
         var query = Post.where { $0.published }
         query = query.where { $0.viewCount >= 10 }
@@ -130,7 +130,7 @@ struct RendererTests {
     }
 }
 
-@Suite("Schema metadata derived by @Entity (design §4, item 3)")
+@Suite("Schema metadata derived by @Entity")
 struct SchemaMetadataTests {
 
     @Test("schema records names, key, and generated columns")

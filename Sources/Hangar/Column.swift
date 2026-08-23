@@ -1,5 +1,5 @@
 /// A typed reference to one table column — what `$0.title` is inside a
-/// `where`/`order` closure (design §3.1). `Value` is the Swift property
+/// `where`/`order` closure. `Value` is the Swift property
 /// type; operators are constrained on it, which is what makes
 /// `Column<Int> > "x"` a compile error.
 ///
@@ -23,7 +23,7 @@ public struct Column<Value>: Sendable {
 
 // MARK: - Ordering
 
-/// One ORDER BY term (design §3.2): `$0.publishedAt.desc()`. Carries the
+/// One ORDER BY term: `$0.publishedAt.desc`. Carries the
 /// column's table for multi-table scopes; single-table SQL renders it bare.
 public struct OrderTerm: Sendable {
     public enum Direction: String, Sendable {

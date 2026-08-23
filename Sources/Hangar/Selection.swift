@@ -1,9 +1,9 @@
 import Foundation
 import PostgresNIO
 
-// Projections (design §6): `.select {}` changes a query's Result type.
+// Projections: `.select {}` changes a query's Result type.
 // Fetching three columns instead of thirty is a real, common win, and the
-// typed tuple variant is the §6.3 parameter-pack territory — see
+// typed tuple variant is the parameter-pack territory — see
 // `Query.select` below for the spike's resolution.
 
 /// An opaque SELECT-list fragment: public so `Selectable` can require it,
@@ -32,7 +32,7 @@ public struct SelectExpression<Value>: Sendable, Selectable {
     public var _selectFragment: SelectFragment { SelectFragment(expression: expression) }
 }
 
-// MARK: - Aggregates (design §6.1)
+// MARK: - Aggregates
 //
 // Return types are chosen so decoding never hits the NUMERIC problem the
 // flight-data-postgres spike catalogued (S3): Postgres widens integer
@@ -77,7 +77,7 @@ extension Column where Value: Comparable & ColumnCodable {
     }
 }
 
-// MARK: - Aggregate comparisons (for `having`, §6.1)
+// MARK: - Aggregate comparisons (for `having`, )
 
 public func == <V: ColumnCodable & Equatable>(lhs: SelectExpression<V>, rhs: V) -> Predicate {
     Predicate(expression: .infix("=", lhs.expression, .bind(SQLBind(rhs))))
@@ -124,7 +124,7 @@ public func <= <V: ColumnCodable & Comparable>(lhs: SelectExpression<V?>, rhs: V
 // MARK: - The selection a query carries
 
 /// How a projected query renders its SELECT list and decodes each row —
-/// installed by `.select {}`, which is what changes `Result` (§6). `items`
+/// installed by `.select {}`, which is what changes `Result`. `items`
 /// carry optional aliases (`expr AS "name"`, used by `select(into:)`).
 /// `invalid` records a malformed `select(into:)` tuple; the `Repo` throws
 /// it before anything reaches the wire (thrown, not trapped).

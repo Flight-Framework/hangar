@@ -11,7 +11,7 @@ enum PostStatus: String, PostgresEnum {
 
 extension PostStatus: DynamicFilterConvertible {}
 
-// The §9.1 allowlist: authorID (and everything else) deliberately absent.
+// The  allowlist: authorID (and everything else) deliberately absent.
 extension Post: DynamicallyFilterable {
     static let filterable: [String: AnyColumn<Post>] = [
         "title": .init(\.title),
@@ -69,7 +69,7 @@ struct Comment: Sendable, Equatable {
     @BelongsTo(foreignKey: \Comment.authorID)
     var author: Loadable<Author>
 
-    // Nullable FK: .loaded(nil) means "no moderator", not "not fetched".
+    // Nullable FK:.loaded(nil) means "no moderator", not "not fetched".
     @BelongsTo(foreignKey: \Comment.moderatorID)
     var moderator: Loadable<Author?>
 }
@@ -108,7 +108,7 @@ struct Event: Sendable, Equatable {
     var name: String
 }
 
-// Upsert fixture (§6.2): "key" carries a UNIQUE constraint to conflict on.
+// Upsert fixture: "key" carries a UNIQUE constraint to conflict on.
 @Entity("hangar_kv")
 struct KV: Sendable, Equatable {
     @ID(generated: true) var id: Int = 0

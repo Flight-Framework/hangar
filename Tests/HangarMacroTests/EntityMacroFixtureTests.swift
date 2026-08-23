@@ -1,12 +1,12 @@
-// Design §4.4 — the macro expansion fixtures, written first, implemented
+// Design  — the macro expansion fixtures, written first, implemented
 // against. These expected-output strings ARE the specification of @Entity's
-// expansion; the design doc's prose examples are illustrative, these are
+// expansion; the original prose examples are illustrative, these are
 // normative.
 //
-// Cases follow the §4.4 list, restricted to Phase 1–2 scope: plain table,
+// Cases follow the list, restricted to Phase 1–2 scope: plain table,
 // custom column names, optionals, enum column, JSONB, composite PK,
 // database-generated key, access-level matching, and the diagnostics.
-// Since Phase 2 (changeset integration, design §11.2) every entity also
+// Since Phase 2 (changeset integration, the design) every entity also
 // gets a `Changesets.TableModel` conformance: `tableName`, the `columns`
 // keypath catalog, and the `_changesetBind` erased-value switch. Hangar's
 // own column DSL sits under `queryColumns` — renamed from Phase 1's
@@ -569,7 +569,7 @@ final class EntityMacroFixtureTests: XCTestCase {
             """,
             diagnostics: [
                 DiagnosticSpec(
-                    message: "@Entity can only be attached to a struct — models are values (design §3).",
+                    message: "@Entity can only be attached to a struct — models are values.",
                     line: 1, column: 1)
             ],
             macroSpecs: testMacros
@@ -669,7 +669,7 @@ final class EntityMacroFixtureTests: XCTestCase {
     }
 }
 
-// MARK: - Phase 3: associations (design §4 item 4, §4.3, §7.1)
+// MARK: - Phase 3: associations
 
 final class EntityAssociationFixtureTests: XCTestCase {
 
@@ -801,7 +801,7 @@ final class EntityAssociationFixtureTests: XCTestCase {
         )
     }
 
-    // MARK: Diagnostics (§4.3: the pairing is enforced both ways)
+    // MARK: Diagnostics
 
     func testLoadableRequiresAssociationAttribute() {
         assertMacroExpansion(
@@ -823,7 +823,7 @@ final class EntityAssociationFixtureTests: XCTestCase {
             """,
             diagnostics: [
                 DiagnosticSpec(
-                    message: "A Loadable property needs an association attribute — mark it @HasMany, @BelongsTo, or @HasOne (§4.3).",
+                    message: "A Loadable property needs an association attribute — mark it @HasMany, @BelongsTo, or @HasOne.",
                     line: 4, column: 5)
             ],
             macroSpecs: associationTestMacros

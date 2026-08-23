@@ -1,15 +1,15 @@
 import Foundation
 
-// Runtime-sourced filters (design §9.1) — the one deliberate safety
+// Runtime-sourced filters — the one deliberate safety
 // tradeoff, made explicit. Filters arriving as JSON from a client can't be
 // compile-checked, so they pass through an opt-in allowlist:
 //
 // ```swift
 // extension Post: DynamicallyFilterable {
 //     static let filterable: [String: AnyColumn<Post>] = [
-//         "title": .init(\.title),
-//         "published": .init(\.published),
-//         "view_count": .init(\.viewCount),
+//         "title":.init(\.title),
+//         "published":.init(\.published),
+//         "view_count":.init(\.viewCount),
 //     ]   // authorID deliberately absent — not client-filterable
 // }
 //
@@ -127,7 +127,7 @@ extension DynamicFilterConvertible where Self: PostgresEnum {
     }
 }
 
-/// One allowlisted column (§9.1): a typed keypath erased behind a closure
+/// One allowlisted column: a typed keypath erased behind a closure
 /// that turns a dynamic value into a bound equality predicate. The keypath
 /// is the compile-checked half; the closure captures its column name and
 /// value type, so the string world never reaches SQL.
@@ -168,7 +168,7 @@ public struct AnyColumn<M: Table>: Sendable {
     }
 }
 
-/// Opting an entity into runtime-sourced filtering (§9.1). The allowlist is
+/// Opting an entity into runtime-sourced filtering. The allowlist is
 /// the entire attack surface: fields absent from it don't exist as far as
 /// dynamic filters are concerned.
 public protocol DynamicallyFilterable: Table {

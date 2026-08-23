@@ -1,0 +1,119 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test (Swift ${{ matrix.swift }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        swift: ["6.2"]
+
+    # A dedicated database per job. The integration suite drops and recreates
+    # its fixture tables, so it needs a server of its own — see CONTRIBUTING.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: hangar_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Check the sibling-repository token is present
+        run: |
+          if [ -z "${{ secrets.SWIFTFLIGHT_CI_TOKEN }}" ]; then
+            echo "::error::SWIFTFLIGHT_CI_TOKEN is not set. hangar resolves swift-changeset"
+            echo "::error::by relative path, and these repositories are private, so CI needs a"
+            echo "::error::token with read access to Swift-Flight/swift-changeset."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          path: Hangar/hangar
+
+      - uses: actions/checkout@v4
+        with:
+          repository: Swift-Flight/swift-changeset
+          token: ${{ secrets.SWIFTFLIGHT_CI_TOKEN }}
+          path: Data/swift-changeset
+
+      - name: Set up Swift
+        uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: ${{ matrix.swift }}
+
+      - name: Build (warnings are errors)
+        working-directory: Hangar/hangar
+        run: swift build -Xswiftc -warnings-as-errors
+
+      # Fails rather than silently skipping if the database is unreachable.
+      # A green run that skipped every integration test proves almost nothing,
+      # and this suite's whole value is what it proves against real Postgres.
+      - name: Verify the integration gate is armed
+        env:
+          HANGAR_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/hangar_test
+        run: |
+          if [ -z "$HANGAR_TEST_DATABASE_URL" ]; then
+            echo "::error::integration tests would skip — the database URL is unset"
+            exit 1
+          fi
+
+      - name: Test
+        env:
+          HANGAR_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/hangar_test
+        working-directory: Hangar/hangar
+        run: swift test
+
+  docs:
+    name: Build documentation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the sibling-repository token is present
+        run: |
+          if [ -z "${{ secrets.SWIFTFLIGHT_CI_TOKEN }}" ]; then
+            echo "::error::SWIFTFLIGHT_CI_TOKEN is not set — see the test job."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          path: Hangar/hangar
+
+      - uses: actions/checkout@v4
+        with:
+          repository: Swift-Flight/swift-changeset
+          token: ${{ secrets.SWIFTFLIGHT_CI_TOKEN }}
+          path: Data/swift-changeset
+
+      - name: Set up Swift
+        uses: swift-actions/setup-swift@v2
+        with:
+          swift-version: "6.2"
+
+      - name: Generate documentation
+        env:
+          HANGAR_BUILD_DOCS: "1"
+        working-directory: Hangar/hangar
+        run: |
+          swift package --allow-writing-to-directory ./docs \
+            generate-documentation --target Hangar \
+            --warnings-as-errors --output-path ./docs

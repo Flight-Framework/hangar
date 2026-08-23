@@ -3,7 +3,7 @@ import Testing
 
 import Hangar
 
-// `Multi` (design §10): typed keys, dependent steps, one transaction.
+// `Multi`: typed keys, dependent steps, one transaction.
 
 private enum K {
     static let post = MultiKey<Post>("post")
@@ -78,7 +78,7 @@ struct MultiIntegrationTests {
             let multi = Multi()
                 .insert(K.post, postChangeset(title: "ambient"))
                 .run(K.count) { _ in
-                    // Repo.current is the transaction repo (§5.1), so this
+                    // Repo.current is the transaction repo, so this
                     // read sees the uncommitted insert above.
                     try await Repo.require().count(Post.all)
                 }
@@ -113,7 +113,7 @@ struct MultiIntegrationTests {
     @Test("duplicate step names are rejected before anything runs — merged Multis included")
     func duplicateKeys() async throws {
         try await withRepo { repo in
-            // Built via merging (§10.1: Multis compose as values); the two
+            // Built via merging; the two
             // halves collide on K.post and the run must refuse up front.
             let first = Multi().insert(K.post, postChangeset(title: "a"))
             let second = Multi().insert(K.post, postChangeset(title: "b"))

@@ -4,7 +4,7 @@
 public enum HangarError: Error, Sendable, CustomStringConvertible {
     /// `Repo.current` was read where no ambient repo is bound. Task-locals
     /// propagate to structured child tasks but not across `Task.detached` —
-    /// a detached task must be handed a `Repo` explicitly (design §5.1).
+    /// a detached task must be handed a `Repo` explicitly.
     case noAmbientRepo
 
     /// `repo.one(...)` matched more than one row.
@@ -47,8 +47,8 @@ public enum HangarError: Error, Sendable, CustomStringConvertible {
     /// second would silently shadow the first.
     case duplicateMultiStep(name: String)
 
-    /// An unloaded association was accessed via `Loadable.get()` (design
-    /// §7.3). Deterministic and loud, never a silent query.
+    /// An unloaded association was accessed via `Loadable.get` (design
+    /// ). Deterministic and loud, never a silent query.
     case notPreloaded(association: String)
 
     /// `.preload` was called with a keypath the entity's generated
@@ -68,7 +68,7 @@ public enum HangarError: Error, Sendable, CustomStringConvertible {
     case invalidProjection(table: String, reason: String)
 
     /// A dynamic filter named a field outside the entity's allowlist
-    /// (§9.1) — rejected, never interpolated.
+    /// — rejected, never interpolated.
     case unknownFilterField(table: String, field: String)
 
     /// A dynamic filter value's shape doesn't match its column's type
@@ -77,7 +77,7 @@ public enum HangarError: Error, Sendable, CustomStringConvertible {
 
     /// Internal invariant: the renderer asked a model for a column its
     /// generated `_bind(for:)` doesn't know. Thrown, not trapped — a bug in
-    /// Hangar should fail one request, not the process (design §7.3).
+    /// Hangar should fail one request, not the process.
     case unknownColumn(table: String, column: String)
 
     public var description: String {
@@ -113,7 +113,7 @@ public enum HangarError: Error, Sendable, CustomStringConvertible {
         case .invalidProjection(let table, let reason):
             return "Projection on \"\(table)\": \(reason)"
         case .unknownFilterField(let table, let field):
-            return "\"\(field)\" is not a filterable field of \"\(table)\" — dynamic filters only reach columns listed in `filterable` (§9.1)."
+            return "\"\(field)\" is not a filterable field of \"\(table)\" — dynamic filters only reach columns listed in `filterable`."
         case .invalidFilterValue(let table, let field):
             return "The value for dynamic filter \"\(field)\" on \"\(table)\" doesn't match the column's type."
         case .unknownColumn(let table, let column):
@@ -121,3 +121,16 @@ public enum HangarError: Error, Sendable, CustomStringConvertible {
         }
     }
 }
+
+#if canImport(Foundation)
+import Foundation
+
+extension HangarError: LocalizedError {
+    /// The same text as ``description``.
+    ///
+    /// Without this, `localizedDescription` — which most logging and
+    /// error-reporting code reaches for — discards every one of these
+    /// carefully written messages and reports a Foundation placeholder.
+    public var errorDescription: String? { description }
+}
+#endif

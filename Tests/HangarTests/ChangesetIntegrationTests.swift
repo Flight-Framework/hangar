@@ -3,11 +3,11 @@ import Testing
 
 import Hangar
 
-// Phase 2 (design §11.2): changeset-driven writes against a real server.
+// Phase 2: changeset-driven writes against a real server.
 
 /// An insert changeset covering every NOT-NULL column without a database
 /// default. `id` is deliberately absent: the fixture table defaults it
-/// (gen_random_uuid()), and `let id` means a changeset *can't* set it —
+/// (gen_random_uuid), and `let id` means a changeset *can't* set it —
 /// primary keys are not writable through this path by construction.
 func postChangeset(
     title: String,

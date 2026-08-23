@@ -3,7 +3,7 @@ import Testing
 
 @testable import Hangar
 
-// Phase 3 (design §7): associations and preloading — always batched, never
+// Phase 3: associations and preloading — always batched, never
 // joined; loaded/unloaded is a loud runtime distinction.
 
 @Suite("Preload SQL — one bound array, however many keys")
@@ -20,7 +20,7 @@ struct PreloadRendererTests {
         #expect(statement.binds.count == 1)
     }
 
-    @Test("association properties are not columns (§4.3)")
+    @Test("association properties are not columns")
     func associationsExcludedFromSchema() {
         #expect(Post.schema.columns.map(\.name).contains("comments") == false)
         #expect(Post.schema.columns.map(\.name).contains("author") == false)
@@ -67,7 +67,7 @@ struct PreloadIntegrationTests {
             #expect(posts.map(\.title) == ["commented", "quiet"])
             #expect(try posts[0].comments.get().count == 3)
             #expect(try posts[0].comments.get().allSatisfy { $0.postID == withComments.id })
-            // "No comments" is data — .loaded([]), never .notLoaded (§7.3).
+            // "No comments" is data —.loaded([]), never.notLoaded.
             #expect(try posts[1].comments.get().isEmpty)
             _ = without
         }

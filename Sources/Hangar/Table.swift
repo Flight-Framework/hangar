@@ -9,15 +9,15 @@ public protocol RowDecodable: Sendable {
     init(from row: PostgresRow) throws
 }
 
-/// The conformance `@Entity` generates (design §4). Everything here is
+/// The conformance `@Entity` generates. Everything here is
 /// macro-emitted; nothing is implemented by hand.
 ///
-/// Refines `Changesets.TableModel` (design §11.2): every entity carries the
+/// Refines `Changesets.TableModel`: every entity carries the
 /// keypath→column metadata changesets validate against, so
 /// `Changeset(Post.self)` and `repo.insert(changeset)` work out of the box.
 /// TableModel's `columns` requirement is the `[TableColumn<Self>]` catalog;
 /// Hangar's own column DSL lives under `queryColumns` — renamed from the
-/// design doc's `columns` precisely to leave that slot to TableModel
+/// original `columns` precisely to leave that slot to TableModel
 /// (recorded in README).
 public protocol Table: RowDecodable, TableModel {
     /// The generated struct with one typed `Column<T>` per stored property —
@@ -42,7 +42,7 @@ public protocol Table: RowDecodable, TableModel {
     static func _changesetBind(column: String, value: any Sendable) -> SQLBind?
 
     /// The association loader for one `@HasMany`/`@BelongsTo`/`@HasOne`
-    /// property, keyed by its keypath (design §4, item 4 — the metadata
+    /// property, keyed by its keypath (the design, item 4 — the metadata
     /// that makes preload possible). Generated only for entities that
     /// declare associations; the default answers nil for everything.
     /// Erased to `any Sendable` here; `.preload` call sites cast back to
@@ -57,7 +57,7 @@ extension Table {
     }
 }
 
-/// Table metadata as the `@Entity` macro records it (design §4, item 3).
+/// Table metadata as the `@Entity` macro records it.
 ///
 /// Everything derived — the key/insertable/updatable subsets and the
 /// rendered column lists — is computed **once**, here, because a schema is
@@ -74,7 +74,7 @@ public struct TableSchema: Sendable {
     /// Columns included in INSERT statements (everything the database
     /// doesn't generate itself).
     public let insertable: [ColumnDefinition]
-    /// Columns included in UPDATE ... SET (insertable minus the key).
+    /// Columns included in UPDATE... SET (insertable minus the key).
     public let updatable: [ColumnDefinition]
 
     /// `"table"` — the quoted table name.

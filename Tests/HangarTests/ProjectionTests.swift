@@ -3,13 +3,13 @@ import Testing
 
 @testable import Hangar
 
-// Phase 4 (design §6, §8): projections, aggregates, subqueries, upsert.
+// Phase 4: projections, aggregates, subqueries, upsert.
 // The unit suite pins SQL text; the integration suite proves decode.
 
-@Suite("Projections and aggregates — SQL (design §6)")
+@Suite("Projections and aggregates — SQL")
 struct ProjectionRendererTests {
 
-    @Test("select single column — the §6.3 pack signature at arity 1")
+    @Test("select single column — the pack signature at arity 1")
     func selectSingle() {
         let statement = SQLRenderer.select(Post.select { $0.id })
         #expect(statement.sql == #"SELECT "id" FROM "hangar_posts""#)
@@ -85,7 +85,7 @@ struct ProjectionRendererTests {
     }
 }
 
-@Suite("Upsert — ON CONFLICT (design §6.2)")
+@Suite("Upsert — ON CONFLICT")
 struct UpsertRendererTests {
 
     @Test("doUpdate renders target and EXCLUDED assignments")
@@ -224,7 +224,7 @@ struct ProjectionIntegrationTests {
         }
     }
 
-    @Test("IN subquery: posts by authors selected in a nested query (§8)")
+    @Test("IN subquery: posts by authors selected in a nested query")
     func inSubquery() async throws {
         try await withRepo { repo in
             let ada = try await repo.insert(Author(id: UUID(), name: "ada"))

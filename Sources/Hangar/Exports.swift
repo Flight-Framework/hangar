@@ -3,6 +3,6 @@
 // PostgresNIO types that appear in Hangar's own API (PostgresClient,
 // PostgresRow) and in macro-generated code, and the changeset layer
 // (Changeset, ValidationRule, TableModel) that repo.insert/update and
-// Multi consume (design §11.2).
+// Multi consume.
 @_exported import Changesets
 @_exported import PostgresNIO

@@ -3,7 +3,7 @@ import PostgresNIO
 /// A lazily-decoded result set: rows arrive from the server and decode one
 /// at a time, so memory stays flat regardless of how many there are.
 ///
-/// Obtained from `repo.stream(query) { ... }`, and valid only inside that
+/// Obtained from `repo.stream(query) {... }`, and valid only inside that
 /// closure — the connection is leased for the stream's lifetime, which is
 /// what bounds it. Escaping the sequence and iterating later is a use after
 /// the lease is returned.

@@ -85,7 +85,7 @@ points straight at what's actually expensive.
 | preload 50 authors × 4 posts (2 queries) | 2.24 ms |
 | naive one-query-per-parent (1 + 50 queries) | 11.10 ms |
 
-This is the design's central performance claim (§7.2) and it holds: the
+This is the design's central performance claim and it holds: the
 cost of N+1 is N round trips, and batching removes them. Note the earlier
 version of this benchmark compared the two over a data set where one
 author owned 1000 posts — both paths then decoded the same ~1200 rows, the

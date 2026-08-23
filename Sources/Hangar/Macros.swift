@@ -1,5 +1,5 @@
 /// `@Entity("posts")` — the macro that makes a struct a Hangar table
-/// (design §4). Generates:
+///. Generates:
 ///
 /// 1. `Columns` — one typed `Column<T>` per stored property, for the
 ///    closure-based operators.
@@ -13,9 +13,9 @@
 /// Association metadata (`@HasMany` et al.) arrives in Phase 3.
 ///
 /// Table name is explicit — no pluralization inference, because inference
-/// is wrong often enough that guessing costs more than typing (§4.1).
+/// is wrong often enough that guessing costs more than typing.
 ///
-/// Also generates the `Changesets.TableModel` conformance (design §11.2):
+/// Also generates the `Changesets.TableModel` conformance:
 /// `tableName`, the `columns` keypath catalog, and the erased-value bind
 /// switch — so `Changeset(Post.self)` and `repo.insert(changeset)` work
 /// with no extra declarations.
@@ -36,21 +36,21 @@ public macro Entity(_ tableName: String) =
 public macro ID(generated: Bool = false) =
     #externalMacro(module: "HangarMacrosImpl", type: "IDMacro")
 
-/// Overrides the default camelCase → snake_case column naming (§4.1):
+/// Overrides the default camelCase → snake_case column naming:
 /// `@Column("created_at") var createdAt: Date`.
 @attached(peer)
 public macro Column(_ name: String) =
     #externalMacro(module: "HangarMacrosImpl", type: "ColumnNameMacro")
 
-/// Stores any `Codable` property as a `jsonb` column (§4.2).
+/// Stores any `Codable` property as a `jsonb` column.
 @attached(peer)
 public macro JSONB() =
     #externalMacro(module: "HangarMacrosImpl", type: "JSONBMacro")
 
-/// A one-to-many association (design §7.1): `foreignKey` is the child
+/// A one-to-many association: `foreignKey` is the child
 /// column that references this table (the parent's primary key by
 /// default). The property must be `var name: Loadable<[Child]>` — not a
-/// column; populated only by `.preload` (§4.3).
+/// column; populated only by `.preload`.
 ///
 /// ```swift
 /// @HasMany(foreignKey: \Comment.postID) var comments: Loadable<[Comment]>
@@ -59,7 +59,7 @@ public macro JSONB() =
 public macro HasMany(foreignKey: AnyKeyPath) =
     #externalMacro(module: "HangarMacrosImpl", type: "HasManyMacro")
 
-/// A child-side association (§7.1): `foreignKey` is *this* table's column
+/// A child-side association: `foreignKey` is *this* table's column
 /// referencing the related row; `references` is the related column it
 /// points at (the related type's `id` by default, Ecto's convention). A
 /// non-optional foreign key pairs with `Loadable<Related>`; a nullable one
@@ -68,9 +68,9 @@ public macro HasMany(foreignKey: AnyKeyPath) =
 public macro BelongsTo(foreignKey: AnyKeyPath, references: AnyKeyPath? = nil) =
     #externalMacro(module: "HangarMacrosImpl", type: "BelongsToMacro")
 
-/// A one-to-zero-or-one association (§7.1): like `@HasMany` but the
+/// A one-to-zero-or-one association: like `@HasMany` but the
 /// property is `Loadable<Related?>` — absence is data (`.loaded(nil)`),
-/// distinct from not-preloaded (§7.3).
+/// distinct from not-preloaded.
 @attached(peer)
 public macro HasOne(foreignKey: AnyKeyPath) =
     #externalMacro(module: "HangarMacrosImpl", type: "HasOneMacro")

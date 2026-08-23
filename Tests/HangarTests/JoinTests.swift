@@ -3,7 +3,7 @@ import Testing
 
 @testable import Hangar
 
-// Phase 4 (design §3.2, §6, §8): joins and correlated subqueries — the
+// Phase 4: joins and correlated subqueries — the
 // multi-table scopes where every column renders table-qualified.
 
 @Suite("Joins and correlated subqueries — SQL")
@@ -16,7 +16,7 @@ struct JoinRendererTests {
         #expect(statement.sql == #"SELECT "hangar_posts"."id", "hangar_posts"."title", "hangar_posts"."published", "hangar_posts"."view_count", "hangar_posts"."created_at", "hangar_posts"."nickname", "hangar_posts"."status", "hangar_posts"."metadata", "hangar_posts"."author_id" FROM "hangar_posts" JOIN "hangar_comments" ON ("hangar_comments"."post_id" = "hangar_posts"."id")"#)
     }
 
-    @Test("the §6 example: leftJoin + groupBy + select(into:) with an aggregate")
+    @Test("leftJoin + groupBy + select(into:) with an aggregate")
     func designExample() throws {
         struct PostSummary: Decodable, Sendable {
             let id: UUID
@@ -45,7 +45,7 @@ struct JoinRendererTests {
         #expect(statement.sql.hasSuffix("LIMIT 5"))
     }
 
-    @Test("correlated EXISTS qualifies inner and outer columns (§8)")
+    @Test("correlated EXISTS qualifies inner and outer columns")
     func correlatedExists() {
         let statement = SQLRenderer.select(
             Post.where { p in
@@ -91,7 +91,7 @@ struct JoinIntegrationTests {
         }
     }
 
-    @Test("the §6 example end-to-end: comment counts per post, zero included")
+    @Test("end-to-end: comment counts per post, zero included")
     func postSummaries() async throws {
         struct PostSummary: Decodable, Sendable, Equatable {
             let title: String
@@ -137,7 +137,7 @@ struct JoinIntegrationTests {
         }
     }
 
-    @Test("correlated EXISTS: posts that have a matching comment (§8)")
+    @Test("correlated EXISTS: posts that have a matching comment")
     func correlatedExists() async throws {
         try await withRepo { repo in
             let author = try await repo.insert(Author(id: UUID(), name: "ada"))

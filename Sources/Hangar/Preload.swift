@@ -1,11 +1,11 @@
 import Changesets
 import PostgresNIO
 
-// Preloading (design §7): always batched, never joined. For N parents,
+// Preloading: always batched, never joined. For N parents,
 // each association costs exactly one extra query — `WHERE fk = ANY($1)` —
 // then rows are grouped in memory and assigned into each parent's
 // `Loadable`. Two has-many preloads never multiply into a cartesian
-// product, which is why separate queries are the default (§7.2).
+// product, which is why separate queries are the default.
 //
 // The underscored loader types and factories are referenced by
 // `@Entity`-generated `_association(for:)` implementations — public for
@@ -40,7 +40,7 @@ public struct _ToOneLoader<Parent: Table, Child: Table>: Sendable {
 }
 
 /// `@HasOne`, or `@BelongsTo` over an optional foreign key: absence is
-/// data, expressed as `.loaded(nil)` — distinct from `.notLoaded` (§7.3).
+/// data, expressed as `.loaded(nil)` — distinct from `.notLoaded`.
 public struct _OptionalToOneLoader<Parent: Table, Child: Table>: Sendable {
     let name: String
     let run: @Sendable (
@@ -85,7 +85,7 @@ public func _belongsTo<Parent: Table, Child: Table, Key: PreloadKey>(
         // First row per key wins. NOT `Dictionary(uniqueKeysWithValues:)`:
         // that traps on a duplicate, and a `references:` pointed at a
         // non-unique column is a user mistake, not a Hangar invariant —
-        // §7.3 says fail the request, never the node.
+        // the rule is: fail the request, never the node.
         let indexed = Dictionary(related.map { ($0[keyPath: relatedKey], $0) }) { first, _ in first }
         for index in parents.indices {
             guard let child = indexed[parents[index][keyPath: foreignKey]] else {
@@ -174,7 +174,7 @@ private func filtered<Child: Table, Key: PreloadKey>(
     return next
 }
 
-// MARK: - Query surface (design §3.2 / §7.2)
+// MARK: - Query surface
 
 /// One pending preload on a query — everything about the association is
 /// captured typed at the `.preload` call site; execution happens in
@@ -185,11 +185,11 @@ struct PreloadStep<Model: Table>: Sendable {
 
 extension Query {
     /// Preloads a `@HasMany` association, optionally tuning the child query
-    /// (ordering, filtering, its own nested `.preload`s — §7.2):
+    /// (ordering, filtering, its own nested `.preload`s):
     ///
     /// ```swift
     /// Post.where { $0.published }
-    ///     .preload(\.comments) { $0.order { $0.createdAt.asc() }.preload(\.author) }
+    ///.preload(\.comments) { $0.order { $0.createdAt.asc }.preload(\.author) }
     /// ```
     public func preload<Child: Table>(
         _ association: WritableKeyPath<Model, Loadable<[Child]>> & Sendable,

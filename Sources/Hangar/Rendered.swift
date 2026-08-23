@@ -24,7 +24,7 @@ extension Query {
     }
 }
 
-extension JoinedQuery2 {
+extension JoinedQuery {
     public var debugSQL: String {
         (try? SQLRenderer.select(self).sql) ?? "<invalid join: \(A.self) ⋈ \(B.self)>"
     }
@@ -36,12 +36,12 @@ extension JoinedQuery2 {
 }
 
 extension Table {
-    /// The `INSERT ... RETURNING` this model renders to.
+    /// The `INSERT... RETURNING` this model renders to.
     public func debugInsertSQL() throws -> String {
         try SQLRenderer.insert(self).sql
     }
 
-    /// The `UPDATE ... WHERE key ... RETURNING` this model renders to.
+    /// The `UPDATE... WHERE key... RETURNING` this model renders to.
     public func debugUpdateSQL() throws -> String {
         try SQLRenderer.update(self).sql
     }
@@ -51,6 +51,3 @@ extension Table {
 /// Underscored and undocumented as API: `quote` is an internal detail of
 /// rendering, but its escaping behavior is a correctness property worth a
 /// test.
-public func SQLRenderer_quoteForTest(_ identifier: String) -> String {
-    SQLRenderer.quote(identifier)
-}

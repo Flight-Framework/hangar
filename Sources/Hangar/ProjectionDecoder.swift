@@ -1,7 +1,7 @@
 import Foundation
 import PostgresNIO
 
-/// Decodes a `select(into:)` projection row into a `Decodable` type (§6):
+/// Decodes a `select(into:)` projection row into a `Decodable` type:
 /// each labeled tuple element renders as `expr AS "label"`, and the type's
 /// synthesized `Decodable` conformance reads cells by those names.
 ///

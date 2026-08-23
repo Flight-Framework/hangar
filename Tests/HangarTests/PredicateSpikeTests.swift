@@ -3,9 +3,9 @@ import Testing
 
 @testable import Hangar
 
-// Design §12: "Spike before Phase 1: the &&/|| overload question (§3.1)."
+// Design: "Spike before Phase 1: the &&/|| overload question."
 //
-// The question: Swift's standard `&&` takes an `@autoclosure () -> Bool`
+// The question: Swift's standard `&&` takes an `@autoclosure  -> Bool`
 // right operand. Does overloading `&&`/`||` over PredicateConvertible
 // resolve cleanly — for predicates AND for ordinary Bool expressions in the
 // same file — or does overload resolution turn ambiguous?
@@ -13,10 +13,10 @@ import Testing
 // Verdict, pinned by this suite compiling and passing: it resolves. Since
 // `Predicate` and `Column<Bool>` are not `Bool`, the standard-library
 // overloads never compete on predicate operands, and Bool-only expressions
-// never see the Hangar overloads. The §3.1 fallback (.and()/.or() chaining)
+// never see the Hangar overloads. The  fallback (.and/.or chaining)
 // is not needed.
 
-@Suite("§3.1 spike — &&/|| overload resolution")
+@Suite("Boolean combinators — &&/|| overload resolution")
 struct PredicateSpikeTests {
 
     @Test("mixed comparison + bool-column expressions resolve and render")
@@ -57,7 +57,7 @@ struct PredicateSpikeTests {
         #expect(evaluated == false)
     }
 
-    @Test("queries are values: composition never mutates the original (§2)")
+    @Test("queries are values: composition never mutates the original")
     func valueSemantics() {
         let base = Post.where { $0.published }
         _ = base.where { $0.viewCount > 10 }.limit(1)

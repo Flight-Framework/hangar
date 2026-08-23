@@ -22,9 +22,9 @@ enum AssociationKind: String {
     case hasOne = "HasOne"
 }
 
-/// One `@HasMany`/`@BelongsTo`/`@HasOne` property (design §7.1). Not a
+/// One `@HasMany`/`@BelongsTo`/`@HasOne` property. Not a
 /// column: excluded from the decoder, the schemas, and every bind switch
-/// (§4.3); populated only by preload.
+///; populated only by preload.
 struct EntityAssociation {
     let identifier: String
     /// The full property type as written (`Loadable<[Comment]>`).
@@ -41,7 +41,7 @@ struct EntityAssociation {
 /// One stored property of an `@Entity` struct, as the macro understands it.
 struct EntityProperty {
     let identifier: String
-    /// The property's type exactly as written (`String?`, `[Int]`, ...).
+    /// The property's type exactly as written (`String?`, `[Int]`,...).
     let typeText: String
     /// For optionals, the wrapped type's text (`String` for `String?`);
     /// equal to `typeText` otherwise.
@@ -116,7 +116,7 @@ func parseEntityMembers(
             continue
         }
 
-        // Associations (§4.3) take a different path from columns entirely.
+        // Associations take a different path from columns entirely.
         let associationAttribute = variable.attributes.compactMap { attribute -> (AssociationKind, AttributeSyntax)? in
             guard let attr = attribute.as(AttributeSyntax.self),
                 let kind = AssociationKind(rawValue: attr.attributeName.trimmedDescription)
@@ -140,7 +140,7 @@ func parseEntityMembers(
         if isLoadable {
             context.diagnoseError(
                 "entity.loadablewithoutassociation",
-                "A Loadable property needs an association attribute — mark it @HasMany, @BelongsTo, or @HasOne (§4.3).",
+                "A Loadable property needs an association attribute — mark it @HasMany, @BelongsTo, or @HasOne.",
                 at: variable)
             failed = true
             continue
@@ -224,7 +224,7 @@ private func loadableArgument(of type: TypeSyntax) -> TypeSyntax? {
     return argument
 }
 
-/// Validates and extracts one association property (§4.3, §7.1).
+/// Validates and extracts one association property.
 private func parseAssociation(
     kind: AssociationKind,
     attribute: AttributeSyntax,
@@ -240,7 +240,7 @@ private func parseAssociation(
     if hasColumnAttribute {
         context.diagnoseError(
             "entity.associationcolumn",
-            "@\(kind.rawValue) can't combine with @ID/@Column/@JSONB — an association is not a column (§4.3).",
+            "@\(kind.rawValue) can't combine with @ID/@Column/@JSONB — an association is not a column.",
             at: variable)
         return nil
     }
@@ -254,7 +254,7 @@ private func parseAssociation(
     guard let argument = loadableArgument(of: type) else {
         context.diagnoseError(
             "entity.associationtype",
-            "@\(kind.rawValue) properties must be Loadable — the runtime marker for \"populated only by preload\" (§4.3, §7.3).",
+            "@\(kind.rawValue) properties must be Loadable — the runtime marker for \"populated only by preload\".",
             at: variable)
         return nil
     }
@@ -271,7 +271,7 @@ private func parseAssociation(
                 at: variable)
         }
     case .hasOne:
-        // Loadable<Child?> — absence is data (§7.3).
+        // Loadable<Child?> — absence is data.
         relatedTypeText = argument.as(OptionalTypeSyntax.self)?.wrappedType.trimmedDescription
         if relatedTypeText == nil {
             context.diagnoseError(
@@ -322,7 +322,7 @@ func staticStringArgument(of attribute: AttributeSyntax) -> String? {
     return segment.content.text
 }
 
-/// Default camelCase → snake_case column naming (design §4.1):
+/// Default camelCase → snake_case column naming:
 /// `viewCount` → `view_count`, `authorID` → `author_id`, `url` → `url`.
 func snakeCase(_ name: String) -> String {
     var result = ""

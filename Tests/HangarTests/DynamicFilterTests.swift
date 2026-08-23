@@ -3,10 +3,10 @@ import Testing
 
 @testable import Hangar
 
-// Phase 5 (design §9.1): allowlisted dynamic filters. The unit suite pins
+// Phase 5: allowlisted dynamic filters. The unit suite pins
 // the safety properties; the integration suite proves the round trip.
 
-@Suite("Dynamic filters — the §9.1 allowlist")
+@Suite("Dynamic filters — the allowlist")
 struct DynamicFilterTests {
 
     @Test("allowlisted fields become bound equality predicates, in sorted order")
