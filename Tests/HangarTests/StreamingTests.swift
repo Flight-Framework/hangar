@@ -115,3 +115,64 @@ struct StreamingIntegrationTests {
     }
 }
 }
+
+extension PostgresIntegrationSuite {
+    @Suite("Streaming — lease guard")
+    struct StreamLeaseTests {
+
+        @Test("a stream that escapes its closure fails loudly on the next read")
+        func escapedStreamThrows() async throws {
+            try await withRepo { repo in
+                try await repo.insert(Post.sample(title: "one"))
+                try await repo.insert(Post.sample(title: "two"))
+
+                // The type system cannot forbid this copy-out (AsyncSequence
+                // requires an escapable Self), so the guard is the runtime
+                // lease: iterating after the closure returned must throw,
+                // never read rows from a connection another query now owns.
+                var escaped: PostgresRowStream<Post>?
+                try await repo.stream(Post.all) { stream in
+                    escaped = stream
+                }
+
+                var iterator = escaped!.makeAsyncIterator()
+                await #expect(throws: HangarError.self) {
+                    _ = try await iterator.next()
+                }
+            }
+        }
+
+        @Test("an iterator made inside the closure also expires with the lease")
+        func escapedIteratorThrows() async throws {
+            try await withRepo { repo in
+                try await repo.insert(Post.sample(title: "one"))
+                var escaped: PostgresRowStream<Post>.AsyncIterator?
+                try await repo.stream(Post.all) { stream in
+                    var iterator = stream.makeAsyncIterator()
+                    _ = try await iterator.next()  // fine: lease is live
+                    escaped = iterator
+                }
+                await #expect(throws: HangarError.self) {
+                    _ = try await escaped!.next()
+                }
+            }
+        }
+
+        @Test("consuming inside the closure is unaffected by the guard")
+        func normalConsumptionUnaffected() async throws {
+            try await withRepo { repo in
+                for i in 1...3 {
+                    try await repo.insert(Post.sample(title: "row-\(i)"))
+                }
+                let titles = try await repo.stream(Post.all.order { $0.title.asc() }) { rows in
+                    var collected: [String] = []
+                    for try await post in rows {
+                        collected.append(post.title)
+                    }
+                    return collected
+                }
+                #expect(titles == ["row-1", "row-2", "row-3"])
+            }
+        }
+    }
+}

@@ -164,7 +164,9 @@ public struct Repo: Sendable {
         _ body: (PostgresRowStream<M>) async throws -> T
     ) async throws -> T {
         let rows = try await execute(SQLRenderer.select(query).postgresQuery(), intent: .read, operation: "select")
-        return try await body(PostgresRowStream(rows: rows) { try M(from: $0) })
+        let lease = StreamLease()
+        defer { lease.expire() }
+        return try await body(PostgresRowStream(rows: rows, decode: { try M(from: $0) }, lease: lease))
     }
 
     /// Streams a projection, decoding one row at a time.
@@ -174,7 +176,9 @@ public struct Repo: Sendable {
     ) async throws -> T {
         let selection = try validatedSelection(of: query)
         let rows = try await execute(SQLRenderer.select(query).postgresQuery(), intent: .read, operation: "select")
-        return try await body(PostgresRowStream(rows: rows, decode: selection.decode))
+        let lease = StreamLease()
+        defer { lease.expire() }
+        return try await body(PostgresRowStream(rows: rows, decode: selection.decode, lease: lease))
     }
 
     private func validatedSelection<M, R>(of query: Query<M, R>) throws -> Selection<R> {

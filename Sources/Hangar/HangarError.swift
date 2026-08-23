@@ -83,6 +83,11 @@ public enum HangarError: Error, Sendable, CustomStringConvertible {
     /// (e.g. a string for an integer column).
     case invalidFilterValue(table: String, field: String)
 
+    /// A `PostgresRowStream` was iterated after the `stream { }` call that
+    /// produced it returned. The connection lease ended with the call, so
+    /// the rows are gone — consume the stream inside the closure.
+    case streamLeaseExpired
+
     /// A bulk write — `delete(query)` or `update(query, set:)` — was given
     /// a query carrying a clause the statement cannot honor (LIMIT, ORDER
     /// BY, GROUP BY...). Refused outright rather than executed with the
@@ -135,6 +140,8 @@ public enum HangarError: Error, Sendable, CustomStringConvertible {
             return "\"\(field)\" is not a filterable field of \"\(table)\" — dynamic filters only reach columns listed in `filterable`."
         case .invalidFilterValue(let table, let field):
             return "The value for dynamic filter \"\(field)\" on \"\(table)\" doesn't match the column's type."
+        case .streamLeaseExpired:
+            return "This PostgresRowStream outlived its stream { } call. The connection lease ends when the closure returns — iterate the stream inside it."
         case .bulkWriteClause(let table, let operation, let clause):
             return "\(operation)(query) on \"\(table)\": the query carries \(clause), which \(operation.uppercased()) cannot honor — bulk writes take only a WHERE. Fetch with the full query and write row by row if you need the other clauses."
         case .unknownColumn(let table, let column):

@@ -23,6 +23,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Postgres array. `Decimal` and `Data` have no array coding upstream, so
   `numeric[]`/`bytea[]` columns remain unsupported.
 
+### Added (safety)
+
+- **Escaped streams fail loudly.** `PostgresRowStream` is an ordinary
+  `Sendable` struct, and Swift's `AsyncSequence` cannot be conformed to by a
+  non-escapable type — so copying one out of its `stream { }` closure cannot
+  be a compile error in this language version (verified against the 6.2.3
+  stdlib's protocol declarations). It is now a runtime one: the connection
+  lease expires when the closure returns, and the first `next()` after that
+  throws `HangarError.streamLeaseExpired` instead of reading rows from a
+  connection another query now owns.
+
 ### Changed
 
 - **`MultiValues`' subscript throws instead of trapping.** A step reading a
