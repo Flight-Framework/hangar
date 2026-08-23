@@ -20,6 +20,15 @@ enum JoinKind: String, Sendable {
 public struct JoinedQuery<A: Table, B: Table, Result: Sendable>: Sendable {
     var kind: JoinKind
     var onPredicate: Predicate
+    /// FROM-clause aliases; nil renders the bare table name. Set only by
+    /// the `Aliased` entry points.
+    var baseAlias: String? = nil
+    var joinedAlias: String? = nil
+    /// The column sets every composition closure receives — constructed at
+    /// the join entry, so an aliased join's later `.where`/`.groupBy`
+    /// closures see alias-qualified columns, not the frozen unaliased ones.
+    var columnsA: A.QueryColumns = A.queryColumns
+    var columnsB: B.QueryColumns = B.queryColumns
     var predicate: Predicate? = nil
     var orderings: [OrderTerm] = []
     var grouping: [SQLExpression] = []
@@ -34,6 +43,10 @@ public struct JoinedQuery<A: Table, B: Table, Result: Sendable>: Sendable {
 
     func rebinding<NewResult>(to selection: Selection<NewResult>) -> JoinedQuery<A, B, NewResult> {
         var next = JoinedQuery<A, B, NewResult>(kind: kind, onPredicate: onPredicate)
+        next.baseAlias = baseAlias
+        next.joinedAlias = joinedAlias
+        next.columnsA = columnsA
+        next.columnsB = columnsB
         next.predicate = predicate
         next.orderings = orderings
         next.grouping = grouping
@@ -49,6 +62,34 @@ public struct JoinedQuery<A: Table, B: Table, Result: Sendable>: Sendable {
 
 // MARK: - Entry points
 
+/// One side of a join: a table, aliased or not. Internal currency that
+/// lets every entry point funnel through one builder.
+struct JoinSide<T: Table>: Sendable {
+    let alias: String?
+    let columns: T.QueryColumns
+
+    static var plain: JoinSide<T> { JoinSide(alias: nil, columns: T.queryColumns) }
+    static func aliased(_ source: Aliased<T>) -> JoinSide<T> {
+        JoinSide(alias: source.name, columns: source.columns)
+    }
+}
+
+/// The one builder every join entry point delegates to.
+private func makeJoin<A: Table, B: Table>(
+    _ kind: JoinKind,
+    base: JoinSide<A>,
+    other: JoinSide<B>,
+    condition: (A.QueryColumns, B.QueryColumns) -> Predicate
+) -> JoinedQuery<A, B, A> {
+    var query = JoinedQuery<A, B, A>(
+        kind: kind, onPredicate: condition(base.columns, other.columns))
+    query.baseAlias = base.alias
+    query.joinedAlias = other.alias
+    query.columnsA = base.columns
+    query.columnsB = other.columns
+    return query
+}
+
 extension Table {
     /// `FROM Self JOIN other ON...` — inner join; rows of `Self` that
     /// have a match.
@@ -56,7 +97,16 @@ extension Table {
         _ other: B.Type,
         on condition: (QueryColumns, B.QueryColumns) -> Predicate
     ) -> JoinedQuery<Self, B, Self> {
-        JoinedQuery(kind: .inner, onPredicate: condition(queryColumns, B.queryColumns))
+        makeJoin(.inner, base: .plain, other: .plain, condition: condition)
+    }
+
+    /// Inner join against an aliased table — how the right-hand side of a
+    /// self-join is named.
+    public static func join<B: Table>(
+        _ other: Aliased<B>,
+        on condition: (QueryColumns, B.QueryColumns) -> Predicate
+    ) -> JoinedQuery<Self, B, Self> {
+        makeJoin(.inner, base: .plain, other: .aliased(other), condition: condition)
     }
 
     /// `FROM Self LEFT JOIN other ON...` — every row of `Self`, matched
@@ -65,7 +115,54 @@ extension Table {
         _ other: B.Type,
         on condition: (QueryColumns, B.QueryColumns) -> Predicate
     ) -> JoinedQuery<Self, B, Self> {
-        JoinedQuery(kind: .left, onPredicate: condition(queryColumns, B.queryColumns))
+        makeJoin(.left, base: .plain, other: .plain, condition: condition)
+    }
+
+    /// Left join against an aliased table.
+    public static func leftJoin<B: Table>(
+        _ other: Aliased<B>,
+        on condition: (QueryColumns, B.QueryColumns) -> Predicate
+    ) -> JoinedQuery<Self, B, Self> {
+        makeJoin(.left, base: .plain, other: .aliased(other), condition: condition)
+    }
+}
+
+extension Aliased {
+    /// Inner join from an aliased base — the left half of a self-join:
+    ///
+    /// ```swift
+    /// Employee.alias("manager").join(Employee.alias("report"),
+    ///     on: { manager, report in report.managerID == manager.id })
+    /// ```
+    public func join<B: Table>(
+        _ other: Aliased<B>,
+        on condition: (T.QueryColumns, B.QueryColumns) -> Predicate
+    ) -> JoinedQuery<T, B, T> {
+        makeJoin(.inner, base: .aliased(self), other: .aliased(other), condition: condition)
+    }
+
+    /// Inner join from an aliased base onto a plainly-named table.
+    public func join<B: Table>(
+        _ other: B.Type,
+        on condition: (T.QueryColumns, B.QueryColumns) -> Predicate
+    ) -> JoinedQuery<T, B, T> {
+        makeJoin(.inner, base: .aliased(self), other: .plain, condition: condition)
+    }
+
+    /// Left join from an aliased base.
+    public func leftJoin<B: Table>(
+        _ other: Aliased<B>,
+        on condition: (T.QueryColumns, B.QueryColumns) -> Predicate
+    ) -> JoinedQuery<T, B, T> {
+        makeJoin(.left, base: .aliased(self), other: .aliased(other), condition: condition)
+    }
+
+    /// Left join from an aliased base onto a plainly-named table.
+    public func leftJoin<B: Table>(
+        _ other: B.Type,
+        on condition: (T.QueryColumns, B.QueryColumns) -> Predicate
+    ) -> JoinedQuery<T, B, T> {
+        makeJoin(.left, base: .aliased(self), other: .plain, condition: condition)
     }
 }
 
@@ -76,23 +173,40 @@ extension Query {
         _ other: B.Type,
         on condition: (Model.QueryColumns, B.QueryColumns) -> Predicate
     ) -> JoinedQuery<Model, B, Result> where Result == Model {
-        joined(.inner, other, condition)
+        joined(.inner, .plain, condition)
+    }
+
+    /// Joins an aliased table onto an already-composed query — required
+    /// when the joined table is the query's own (a self-join), allowed
+    /// anywhere.
+    public func join<B: Table>(
+        _ other: Aliased<B>,
+        on condition: (Model.QueryColumns, B.QueryColumns) -> Predicate
+    ) -> JoinedQuery<Model, B, Result> where Result == Model {
+        joined(.inner, .aliased(other), condition)
     }
 
     public func leftJoin<B: Table>(
         _ other: B.Type,
         on condition: (Model.QueryColumns, B.QueryColumns) -> Predicate
     ) -> JoinedQuery<Model, B, Result> where Result == Model {
-        joined(.left, other, condition)
+        joined(.left, .plain, condition)
+    }
+
+    /// Left-joins an aliased table onto an already-composed query.
+    public func leftJoin<B: Table>(
+        _ other: Aliased<B>,
+        on condition: (Model.QueryColumns, B.QueryColumns) -> Predicate
+    ) -> JoinedQuery<Model, B, Result> where Result == Model {
+        joined(.left, .aliased(other), condition)
     }
 
     private func joined<B: Table>(
         _ kind: JoinKind,
-        _ other: B.Type,
+        _ other: JoinSide<B>,
         _ condition: (Model.QueryColumns, B.QueryColumns) -> Predicate
     ) -> JoinedQuery<Model, B, Model> where Result == Model {
-        var next = JoinedQuery<Model, B, Model>(
-            kind: kind, onPredicate: condition(Model.queryColumns, B.queryColumns))
+        var next = makeJoin(kind, base: JoinSide<Model>.plain, other: other, condition: condition)
         next.predicate = predicate
         next.orderings = orderings
         // Grouping and having were omitted here, so `Post.groupBy { … }.join(…)`
@@ -118,7 +232,7 @@ extension JoinedQuery {
         _ build: (A.QueryColumns, B.QueryColumns) -> some PredicateConvertible
     ) -> JoinedQuery<A, B, Result> {
         var next = self
-        let added = build(A.queryColumns, B.queryColumns).predicate
+        let added = build(columnsA, columnsB).predicate
         if let existing = next.predicate {
             next.predicate = Predicate(expression: .infix("AND", existing.expression, added.expression))
         } else {
@@ -131,7 +245,7 @@ extension JoinedQuery {
         _ build: (A.QueryColumns, B.QueryColumns) -> OrderTerm
     ) -> JoinedQuery<A, B, Result> {
         var next = self
-        next.orderings.append(build(A.queryColumns, B.queryColumns))
+        next.orderings.append(build(columnsA, columnsB))
         return next
     }
 
@@ -139,7 +253,7 @@ extension JoinedQuery {
         _ build: (A.QueryColumns, B.QueryColumns) -> Column<V>
     ) -> JoinedQuery<A, B, Result> {
         var next = self
-        next.grouping.append(build(A.queryColumns, B.queryColumns).expression)
+        next.grouping.append(build(columnsA, columnsB).expression)
         return next
     }
 
@@ -147,7 +261,7 @@ extension JoinedQuery {
         _ build: (A.QueryColumns, B.QueryColumns) -> some PredicateConvertible
     ) -> JoinedQuery<A, B, Result> {
         var next = self
-        let added = build(A.queryColumns, B.queryColumns).predicate
+        let added = build(columnsA, columnsB).predicate
         if let existing = next.having {
             next.having = Predicate(expression: .infix("AND", existing.expression, added.expression))
         } else {
@@ -180,7 +294,7 @@ extension JoinedQuery {
         _ build: (A.QueryColumns, B.QueryColumns) -> (repeat each S)
     ) -> JoinedQuery<A, B, (repeat (each S).Value)>
     where repeat (each S).Value: PostgresDecodable & Sendable {
-        let selected = build(A.queryColumns, B.queryColumns)
+        let selected = build(columnsA, columnsB)
         var items: [(expression: SQLExpression, alias: String?)] = []
         for item in repeat each selected {
             items.append((item._selectFragment.expression, nil))
@@ -214,7 +328,7 @@ extension JoinedQuery {
         into type: T.Type,
         _ build: (A.QueryColumns, B.QueryColumns) -> Fields
     ) -> JoinedQuery<A, B, T> {
-        let fields = build(A.queryColumns, B.queryColumns)
+        let fields = build(columnsA, columnsB)
         var items: [(expression: SQLExpression, alias: String?)] = []
         var invalid: HangarError?
         let mirror = Mirror(reflecting: fields)
@@ -249,14 +363,35 @@ extension JoinedQuery {
 // MARK: - Rendering
 
 extension SQLRenderer {
-    static func select<A, B, R>(_ query: JoinedQuery<A, B, R>) throws -> RenderedStatement {
-        guard A.schema.name != B.schema.name else {
+    /// `FROM a [AS alias] KIND b [AS alias] ON ...` — shared by select and
+    /// count so alias handling and the ambiguity guard exist exactly once.
+    static func joinFromClause<A, B, R>(
+        _ query: JoinedQuery<A, B, R>, writer: inout BindWriter
+    ) throws -> String {
+        // The two FROM entries must expose distinct names or every column
+        // reference in the statement is ambiguous. Aliases are how a
+        // self-join satisfies this.
+        let effectiveA = query.baseAlias ?? A.schema.name
+        let effectiveB = query.joinedAlias ?? B.schema.name
+        guard effectiveA != effectiveB else {
             throw HangarError.invalidProjection(
                 table: A.schema.name,
-                reason: "self-joins need table aliases, which Hangar does not support yet.")
+                reason: A.schema.name == B.schema.name
+                    ? "a self-join needs an alias on at least one side: \(A.schema.name).alias(\"parent\").join(\(B.schema.name).alias(\"child\"), on: ...)."
+                    : "both sides of this join are named \"\(effectiveA)\" — give them distinct aliases.")
         }
+        var sql = "FROM \(A.schema.quotedName)"
+        if let alias = query.baseAlias { sql += " AS \(quote(alias))" }
+        sql += " \(query.kind.rawValue) \(B.schema.quotedName)"
+        if let alias = query.joinedAlias { sql += " AS \(quote(alias))" }
+        sql += " ON \(SQLRenderer.render(query.onPredicate.expression, writer: &writer))"
+        return sql
+    }
+
+    static func select<A, B, R>(_ query: JoinedQuery<A, B, R>) throws -> RenderedStatement {
         var writer = BindWriter()
         writer.qualified = true
+        let from = try joinFromClause(query, writer: &writer)
         let list: String
         if let selection = query.selection {
             list = selection.items
@@ -265,15 +400,15 @@ extension SQLRenderer {
                     return item.alias.map { "\(rendered) AS \(quote($0))" } ?? rendered
                 }
                 .joined(separator: ", ")
+        } else if let alias = query.baseAlias {
+            // The base entity's columns under its alias — decoded by A's
+            // positional decoder exactly as in a single-table fetch.
+            list = A.schema.qualifiedSelectList(as: alias)
         } else {
-            // The base entity's columns, qualified — decoded by A's
-            // generated positional decoder exactly as in a single-table
-            // fetch.
             list = A.schema.qualifiedSelectList
         }
         var sql = "SELECT \(query.isDistinct ? "DISTINCT " : "")\(list)"
-        sql += " FROM \(A.schema.quotedName) \(query.kind.rawValue) \(B.schema.quotedName)"
-        sql += " ON \(SQLRenderer.render(query.onPredicate.expression, writer: &writer))"
+        sql += " \(from)"
         SQLRenderer.appendWhere(query.predicate, to: &sql, writer: &writer)
         if !query.grouping.isEmpty {
             let terms = query.grouping.map { SQLRenderer.render($0, writer: &writer) }.joined(separator: ", ")
@@ -352,8 +487,7 @@ extension Repo {
     public func count<A, B, R>(_ query: JoinedQuery<A, B, R>) async throws -> Int {
         var writer = BindWriter()
         writer.qualified = true
-        var sql = "SELECT count(*) FROM \(A.schema.quotedName) \(query.kind.rawValue) \(B.schema.quotedName)"
-        sql += " ON \(SQLRenderer.render(query.onPredicate.expression, writer: &writer))"
+        var sql = "SELECT count(*) \(try SQLRenderer.joinFromClause(query, writer: &writer))"
         if let predicate = query.predicate {
             sql += " WHERE \(SQLRenderer.render(predicate.expression, writer: &writer))"
         }

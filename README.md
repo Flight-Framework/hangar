@@ -76,12 +76,20 @@ try await repo.all(
 )
 ```
 
-**Joins**, inner and left, with the base entity's columns qualified:
+**Joins**, inner and left, with the base entity's columns qualified —
+including self-joins through table aliases:
 
 ```swift
 Post.leftJoin(Comment.self, on: { post, comment in comment.postID == post.id })
     .groupBy { post, _ in post.id }
+
+Employee.alias("manager").join(Employee.alias("report"),
+    on: { manager, report in report.managerID == manager.id })
 ```
+
+An unaliased self-join is refused with the remedy named — every column
+reference would be ambiguous — and composition closures after an aliased
+join see alias-qualified columns throughout.
 
 **Preloading** that batches rather than N+1 — one query per association, using
 `= ANY($1)`:
@@ -176,7 +184,7 @@ let repo = Repo(connection: connection)
 ## What is not here
 
 No migrations — use a migration tool. No CTEs, no `DISTINCT ON`, no
-three-table joins or self-joins, and no `@HasMany(through:)`.
+three-table joins, and no `@HasMany(through:)`.
 
 ## Documentation
 

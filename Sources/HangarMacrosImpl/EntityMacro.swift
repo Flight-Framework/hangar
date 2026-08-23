@@ -106,12 +106,25 @@ public struct EntityMacro: MemberMacro, ExtensionMacro {
     ) -> DeclSyntax {
         // The table rides along on every column so multi-table scopes
         // (correlated subqueries, joins) can render qualified references.
+        // `init(table:)` rebuilds every column under an override qualifier —
+        // the seam `Table.alias(_:)` uses to give a self-join two
+        // distinguishable column sets. `init()` is the everyday path and
+        // bakes the entity's own table name.
         let members = properties
-            .map { #"    \#(access)let \#($0.identifier) = Hangar.Column<\#($0.typeText)>("\#($0.columnName)", table: "\#(tableName)")"# }
+            .map { #"    \#(access)let \#($0.identifier): Hangar.Column<\#($0.typeText)>"# }
+            .joined(separator: "\n")
+        let assignments = properties
+            .map { #"        self.\#($0.identifier) = Hangar.Column<\#($0.typeText)>("\#($0.columnName)", table: table)"# }
             .joined(separator: "\n")
         return """
-            \(raw: access)struct Columns: Sendable {
+            \(raw: access)struct Columns: Hangar.AliasableColumns {
             \(raw: members)
+                \(raw: access)init() {
+                    self.init(table: "\(raw: tableName)")
+                }
+                \(raw: access)init(table: String) {
+            \(raw: assignments)
+                }
             }
             """
     }

@@ -54,11 +54,20 @@ final class EntityMacroFixtureTests: XCTestCase {
                 var viewCount: Int
                 let authorID: UUID
 
-                struct Columns: Sendable {
-                    let id = Hangar.Column<UUID>("id", table: "posts")
-                    let title = Hangar.Column<String>("title", table: "posts")
-                    let viewCount = Hangar.Column<Int>("view_count", table: "posts")
-                    let authorID = Hangar.Column<UUID>("author_id", table: "posts")
+                struct Columns: Hangar.AliasableColumns {
+                    let id: Hangar.Column<UUID>
+                    let title: Hangar.Column<String>
+                    let viewCount: Hangar.Column<Int>
+                    let authorID: Hangar.Column<UUID>
+                    init() {
+                        self.init(table: "posts")
+                    }
+                    init(table: String) {
+                        self.id = Hangar.Column<UUID>("id", table: table)
+                        self.title = Hangar.Column<String>("title", table: table)
+                        self.viewCount = Hangar.Column<Int>("view_count", table: table)
+                        self.authorID = Hangar.Column<UUID>("author_id", table: table)
+                    }
                 }
 
                 static let queryColumns = Columns()
@@ -165,11 +174,20 @@ final class EntityMacroFixtureTests: XCTestCase {
                 var nickname: String?
                 var loginCount: Int = 0
 
-                public struct Columns: Sendable {
-                    public let id = Hangar.Column<UUID>("id", table: "users")
-                    public let email = Hangar.Column<String>("email_address", table: "users")
-                    public let nickname = Hangar.Column<String?>("nickname", table: "users")
-                    public let loginCount = Hangar.Column<Int>("login_count", table: "users")
+                public struct Columns: Hangar.AliasableColumns {
+                    public let id: Hangar.Column<UUID>
+                    public let email: Hangar.Column<String>
+                    public let nickname: Hangar.Column<String?>
+                    public let loginCount: Hangar.Column<Int>
+                    public init() {
+                        self.init(table: "users")
+                    }
+                    public init(table: String) {
+                        self.id = Hangar.Column<UUID>("id", table: table)
+                        self.email = Hangar.Column<String>("email_address", table: table)
+                        self.nickname = Hangar.Column<String?>("nickname", table: table)
+                        self.loginCount = Hangar.Column<Int>("login_count", table: table)
+                    }
                 }
 
                 public static let queryColumns = Columns()
@@ -278,11 +296,20 @@ final class EntityMacroFixtureTests: XCTestCase {
                 var metadata: ArticleMetadata
                 var draft: DraftState?
 
-                struct Columns: Sendable {
-                    let id = Hangar.Column<UUID>("id", table: "articles")
-                    let status = Hangar.Column<Status>("status", table: "articles")
-                    let metadata = Hangar.Column<ArticleMetadata>("metadata", table: "articles")
-                    let draft = Hangar.Column<DraftState?>("draft", table: "articles")
+                struct Columns: Hangar.AliasableColumns {
+                    let id: Hangar.Column<UUID>
+                    let status: Hangar.Column<Status>
+                    let metadata: Hangar.Column<ArticleMetadata>
+                    let draft: Hangar.Column<DraftState?>
+                    init() {
+                        self.init(table: "articles")
+                    }
+                    init(table: String) {
+                        self.id = Hangar.Column<UUID>("id", table: table)
+                        self.status = Hangar.Column<Status>("status", table: table)
+                        self.metadata = Hangar.Column<ArticleMetadata>("metadata", table: table)
+                        self.draft = Hangar.Column<DraftState?>("draft", table: table)
+                    }
                 }
 
                 static let queryColumns = Columns()
@@ -386,10 +413,18 @@ final class EntityMacroFixtureTests: XCTestCase {
                 let tagID: UUID
                 var position: Int
 
-                struct Columns: Sendable {
-                    let postID = Hangar.Column<UUID>("post_id", table: "post_tags")
-                    let tagID = Hangar.Column<UUID>("tag_id", table: "post_tags")
-                    let position = Hangar.Column<Int>("position", table: "post_tags")
+                struct Columns: Hangar.AliasableColumns {
+                    let postID: Hangar.Column<UUID>
+                    let tagID: Hangar.Column<UUID>
+                    let position: Hangar.Column<Int>
+                    init() {
+                        self.init(table: "post_tags")
+                    }
+                    init(table: String) {
+                        self.postID = Hangar.Column<UUID>("post_id", table: table)
+                        self.tagID = Hangar.Column<UUID>("tag_id", table: table)
+                        self.position = Hangar.Column<Int>("position", table: table)
+                    }
                 }
 
                 static let queryColumns = Columns()
@@ -481,9 +516,16 @@ final class EntityMacroFixtureTests: XCTestCase {
                 var id: Int = 0
                 var name: String
 
-                struct Columns: Sendable {
-                    let id = Hangar.Column<Int>("id", table: "events")
-                    let name = Hangar.Column<String>("name", table: "events")
+                struct Columns: Hangar.AliasableColumns {
+                    let id: Hangar.Column<Int>
+                    let name: Hangar.Column<String>
+                    init() {
+                        self.init(table: "events")
+                    }
+                    init(table: String) {
+                        self.id = Hangar.Column<Int>("id", table: table)
+                        self.name = Hangar.Column<String>("name", table: table)
+                    }
                 }
 
                 static let queryColumns = Columns()
@@ -703,10 +745,18 @@ final class EntityAssociationFixtureTests: XCTestCase {
                 var author: Loadable<Author>
                 var extra: Loadable<Extra?>
 
-                struct Columns: Sendable {
-                    let id = Hangar.Column<UUID>("id", table: "posts")
-                    let title = Hangar.Column<String>("title", table: "posts")
-                    let authorID = Hangar.Column<UUID>("author_id", table: "posts")
+                struct Columns: Hangar.AliasableColumns {
+                    let id: Hangar.Column<UUID>
+                    let title: Hangar.Column<String>
+                    let authorID: Hangar.Column<UUID>
+                    init() {
+                        self.init(table: "posts")
+                    }
+                    init(table: String) {
+                        self.id = Hangar.Column<UUID>("id", table: table)
+                        self.title = Hangar.Column<String>("title", table: table)
+                        self.authorID = Hangar.Column<UUID>("author_id", table: table)
+                    }
                 }
 
                 static let queryColumns = Columns()

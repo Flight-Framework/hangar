@@ -55,11 +55,64 @@ struct JoinRendererTests {
         #expect(statement.binds.count == 1)
     }
 
-    @Test("self-joins are refused until aliases exist")
-    func selfJoin() {
+    @Test("an unaliased self-join is still refused — every column would be ambiguous")
+    func unaliasedSelfJoin() {
         #expect(throws: HangarError.self) {
             _ = try SQLRenderer.select(Post.join(Post.self, on: { a, b in a.id == b.id }))
         }
+        do {
+            _ = try SQLRenderer.select(Post.join(Post.self, on: { a, b in a.id == b.id }))
+        } catch let error as HangarError {
+            // The refusal now names the remedy, not a missing feature.
+            #expect(error.description.contains("alias"))
+        } catch {
+            Issue.record("unexpected error type")
+        }
+    }
+
+    @Test("an aliased self-join renders both sides distinctly, columns and all")
+    func aliasedSelfJoin() throws {
+        let statement = try SQLRenderer.select(
+            Post.alias("parent").join(
+                Post.alias("child"),
+                on: { parent, child in child.authorID == parent.authorID }))
+        #expect(
+            statement.sql
+                == #"SELECT "parent"."id", "parent"."title", "parent"."published", "parent"."view_count", "parent"."created_at", "parent"."nickname", "parent"."status", "parent"."metadata", "parent"."author_id" FROM "hangar_posts" AS "parent" JOIN "hangar_posts" AS "child" ON ("child"."author_id" = "parent"."author_id")"#)
+    }
+
+    @Test("composition closures after an aliased join see alias-qualified columns")
+    func aliasedComposition() throws {
+        let statement = try SQLRenderer.select(
+            Post.alias("parent").join(Post.alias("child"), on: { p, c in c.authorID == p.authorID })
+                .where { parent, child in parent.published && child.title != "x" }
+                .order { parent, _ in parent.title.asc() })
+        #expect(statement.sql.contains(#"("parent"."published" AND ("child"."title" <> $1))"#))
+        #expect(statement.sql.contains(#"ORDER BY "parent"."title" ASC"#))
+    }
+
+    @Test("aliasing one side is enough for a self-join")
+    func oneSidedAlias() throws {
+        let statement = try SQLRenderer.select(
+            Post.join(Post.alias("other"), on: { base, other in other.authorID == base.authorID }))
+        #expect(statement.sql.contains(#"FROM "hangar_posts" JOIN "hangar_posts" AS "other""#))
+    }
+
+    @Test("two sides aliased to the same name are refused")
+    func collidingAliases() {
+        #expect(throws: HangarError.self) {
+            _ = try SQLRenderer.select(
+                Post.alias("p").join(Comment.alias("p"), on: { p, c in c.postID == p.id }))
+        }
+    }
+
+    @Test("an alias on an ordinary two-table join is allowed, not just tolerated")
+    func aliasOnPlainJoin() throws {
+        let statement = try SQLRenderer.select(
+            Post.join(Comment.alias("c"), on: { p, c in c.postID == p.id })
+                .where { _, c in c.body != "" })
+        #expect(statement.sql.contains(#"JOIN "hangar_comments" AS "c" ON ("c"."post_id" = "hangar_posts"."id")"#))
+        #expect(statement.sql.contains(#"("c"."body" <> $1)"#))
     }
 }
 
@@ -178,4 +231,67 @@ struct JoinIntegrationTests {
         }
     }
 }
+}
+
+extension PostgresIntegrationSuite {
+    @Suite("Self-joins (real Postgres)")
+    struct SelfJoinIntegrationTests {
+
+        @Test("a self-join answers a real correlated question end to end")
+        func coAuthoredPosts() async throws {
+            try await withRepo { repo in
+                let shared = UUID()
+                var first = Post.sample(title: "first")
+                first.authorID = shared
+                var second = Post.sample(title: "second")
+                second.authorID = shared
+                var lone = Post.sample(title: "lone")
+                lone.authorID = UUID()
+                for post in [first, second, lone] { try await repo.insert(post) }
+
+                // "Posts whose author wrote another, different post."
+                struct Pair: Decodable, Sendable {
+                    let title: String
+                    let sibling: String
+                }
+                let pairs = try await repo.all(
+                    Post.alias("mine").join(
+                        Post.alias("sibling"),
+                        on: { mine, sibling in sibling.authorID == mine.authorID })
+                        .where { mine, sibling in mine.title != sibling.title }
+                        .order { mine, _ in mine.title.asc() }
+                        .select(into: Pair.self) { mine, sibling in
+                            (title: mine.title, sibling: sibling.title)
+                        })
+                #expect(pairs.map(\.title) == ["first", "second"])
+                #expect(pairs.map(\.sibling) == ["second", "first"])
+            }
+        }
+
+        @Test("the base-entity path decodes rows fetched under an alias")
+        func aliasedBaseEntityFetch() async throws {
+            try await withRepo { repo in
+                let shared = UUID()
+                for title in ["a", "b"] {
+                    var post = Post.sample(title: title)
+                    post.authorID = shared
+                    try await repo.insert(post)
+                }
+                let rows = try await repo.all(
+                    Post.alias("mine").join(
+                        Post.alias("other"),
+                        on: { mine, other in other.authorID == mine.authorID })
+                        .where { mine, other in mine.title != other.title })
+                #expect(rows.map(\.title).sorted() == ["a", "b"])
+
+                // And count agrees with what all() returned.
+                let matches = try await repo.count(
+                    Post.alias("mine").join(
+                        Post.alias("other"),
+                        on: { mine, other in other.authorID == mine.authorID })
+                        .where { mine, other in mine.title != other.title })
+                #expect(matches == 2)
+            }
+        }
+    }
 }

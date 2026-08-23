@@ -21,8 +21,9 @@ public protocol RowDecodable: Sendable {
 /// (recorded in README).
 public protocol Table: RowDecodable, TableModel {
     /// The generated struct with one typed `Column<T>` per stored property —
-    /// what `where`/`order` closures receive.
-    associatedtype QueryColumns: Sendable
+    /// what `where`/`order` closures receive. `AliasableColumns` so a join
+    /// can reconstruct it under an alias — the seam self-joins stand on.
+    associatedtype QueryColumns: AliasableColumns
 
     static var queryColumns: QueryColumns { get }
     static var schema: TableSchema { get }
@@ -87,6 +88,16 @@ public struct TableSchema: Sendable {
     let insertList: String
     /// `$1, $2, …` for the insertable columns.
     let insertPlaceholders: String
+
+    /// The column list qualified with `alias` instead of the table name —
+    /// computed on demand, unlike the cached `qualifiedSelectList`, because
+    /// aliased fetches are join-shaped and not the per-row hot path.
+    func qualifiedSelectList(as alias: String) -> String {
+        let quoted = SQLRenderer.quote(alias)
+        return columns
+            .map { "\(quoted).\($0.quotedName)" }
+            .joined(separator: ", ")
+    }
 
     public init(name: String, columns: [ColumnDefinition]) {
         self.name = name

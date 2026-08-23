@@ -8,6 +8,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **Self-joins, via table aliases.** `Post.alias("parent").join(Post.alias("child"), on: ...)`
+  renders `FROM "posts" AS "parent" JOIN "posts" AS "child"`, with every
+  column reference — in the ON condition, later `.where`/`.order`/`.groupBy`
+  closures, and the base entity's select list — qualified by its alias.
+  Aliases are equally allowed on ordinary joins. An unaliased self-join is
+  still refused, now with the remedy named; two sides aliased to the same
+  name are refused too. The `@Entity`-generated `Columns` struct gained
+  `init(table:)` (the `AliasableColumns` conformance) to make aliased column
+  sets constructible; `Table.QueryColumns` is now constrained to it, which
+  is source-breaking only for hand-written `Table` conformances — `@Entity`
+  regenerates automatically.
 - **Transaction isolation levels and retry.**
   `repo.transaction(isolation: .serializable) { }` applies the level to the
   outermost `BEGIN` (nested calls are savepoints and cannot change it), and
