@@ -6,6 +6,35 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Bulk `delete(query)`.** `repo.delete(Session.where { $0.expiresAt < .now })`
+  deletes every matching row in one statement and returns the count. A query
+  carrying a clause DELETE cannot honor — LIMIT, ORDER BY, GROUP BY, HAVING,
+  DISTINCT — throws `HangarError.bulkWriteClause` rather than executing with
+  the clause silently dropped.
+- **Array column types.** `@Column var tags: [String]` maps to `text[]`, and
+  likewise for `Bool`, `Int`/`Int16`/`Int32`/`Int64`, `Float`, `Double`,
+  `UUID`, and `Date` elements — exactly the set PostgresNIO can code into a
+  Postgres array. `Decimal` and `Data` have no array coding upstream, so
+  `numeric[]`/`bytea[]` columns remain unsupported.
+
+### Changed
+
+- **`MultiValues`' subscript throws instead of trapping.** A step reading a
+  key whose step hasn't run, or a mistyped key, now fails that Multi's
+  transaction and reports through `MultiResult.failure` — the right blast
+  radius for a wiring bug discovered inside a live transaction is one rolled
+  back transaction, not an aborted process. Call sites gain a `try`.
+
+### Fixed
+
+- **`SQLFragment` columns render table-qualified in multi-table scopes.**
+  A fragment like `SQLFragment("char_length(\(p.title)) > \(n)")` inside a
+  join previously rendered a bare `"title"` — ambiguous at best, silently
+  resolved to the wrong table at worst. Qualification is now decided at
+  render time, exactly as for columns outside fragments.
+
 ### Fixed — silent wrong answers
 
 Three bugs that rendered valid SQL and returned the wrong result. Nothing

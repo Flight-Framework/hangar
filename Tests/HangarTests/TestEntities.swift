@@ -115,3 +115,12 @@ struct KV: Sendable, Equatable {
     var key: String
     var value: String
 }
+
+// Array-column fixture: labels is text[], scores is bigint[].
+@Entity("hangar_tagged")
+struct Tagged: Sendable, Equatable {
+    @ID(generated: true) var id: Int = 0
+    var name: String
+    var labels: [String]
+    var scores: [Int]
+}

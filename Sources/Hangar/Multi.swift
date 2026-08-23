@@ -25,24 +25,29 @@ public struct MultiKey<Value: Sendable>: Sendable, CustomStringConvertible {
 public struct MultiValues: Sendable {
     var storage: [String: any Sendable] = [:]
 
-    /// Typed retrieval, no cast at the call site. Reading a key whose step
-    /// hasn't run (or doesn't exist) is a wiring bug — deterministic on
-    /// first execution — and traps with the key's name, same policy as
-    /// `Container.resolve`. Mistyped keys can't survive to here:
-    /// `repo.run(multi)` rejects duplicate step names up front, and a
-    /// step's value always matches its own key's type.
+    /// Typed retrieval, no cast at the call site.
+    ///
+    /// Reading a key whose step hasn't run — ordered after this one, or
+    /// never added — throws rather than trapping. It is a wiring bug, and
+    /// it is deterministic on first execution, but a step closure runs
+    /// inside a transaction on a live server: the right blast radius for
+    /// a mistake there is one rolled-back transaction reported through
+    /// `MultiResult.failure`, not an aborted process.
+    ///
+    /// ```swift
+    /// .run { r in try await notify(try r[K.user]) }
+    /// ```
     public subscript<T: Sendable>(_ key: MultiKey<T>) -> T {
-        guard let raw = storage[key.name] else {
-            preconditionFailure("""
-            Multi has no result named '\(key.name)' — a step can only read keys of steps ordered before it.
-            """)
+        get throws {
+            guard let raw = storage[key.name] else {
+                throw HangarError.multiValueMissing(key: key.name)
+            }
+            guard let value = raw as? T else {
+                throw HangarError.multiValueTypeMismatch(
+                    key: key.name, stored: "\(type(of: raw))", requested: "\(T.self)")
+            }
+            return value
         }
-        guard let value = raw as? T else {
-            preconditionFailure("""
-            Multi result '\(key.name)' is \(type(of: raw)), not \(T.self) — two MultiKeys share a name with different types.
-            """)
-        }
-        return value
     }
 }
 
@@ -79,7 +84,7 @@ public struct Multi: Sendable {
     }
 
     /// Dependent insert: the changeset is built from earlier results —
-    /// `.insert(K.profile) { r in profileChangeset(for: r[K.user]) }`.
+    /// `.insert(K.profile) { r in profileChangeset(for: try r[K.user]) }`.
     public func insert<M: Table>(
         _ key: MultiKey<M>,
         _ make: @escaping @Sendable (MultiValues) throws -> Changeset<M>
@@ -123,7 +128,7 @@ public struct Multi: Sendable {
     }
 
     /// A keyless side-effect step —
-    /// `.run { r in try await sendWelcomeEmail(to: r[K.user]) }`. Named
+    /// `.run { r in try await sendWelcomeEmail(to: try r[K.user]) }`. Named
     /// internally by position for failure reporting.
     public func run(
         _ body: @escaping @Sendable (MultiValues) async throws -> Void

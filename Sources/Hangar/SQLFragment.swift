@@ -22,6 +22,13 @@ public struct SQLFragment: Sendable, ExpressibleByStringInterpolation {
     enum Part: Sendable {
         case sql(String)
         case bind(SQLBind)
+        /// A column reference, quoted — and qualified — at render time,
+        /// not at interpolation time. When the fragment is built there is
+        /// no way to know whether it will land in a single-table WHERE or
+        /// inside a join, and only the renderer knows that; baking a bare
+        /// quoted name here made every fragment column ambiguous in any
+        /// multi-table scope.
+        case column(table: String, name: String)
     }
 
     let parts: [Part]
@@ -55,9 +62,11 @@ public struct SQLFragment: Sendable, ExpressibleByStringInterpolation {
             parts.append(.bind(SQLBind(value)))
         }
 
-        /// A column — its quoted identifier, never a bind.
+        /// A column — its quoted identifier, never a bind. In a
+        /// multi-table scope (a join, a correlated subquery) it renders
+        /// table-qualified, exactly as columns outside fragments do.
         public mutating func appendInterpolation<V>(_ column: Column<V>) {
-            parts.append(.sql(SQLRenderer.quote(column.name)))
+            parts.append(.column(table: column.table, name: column.name))
         }
 
         /// Verbatim SQL text. The deliberate hole in the safety story, and

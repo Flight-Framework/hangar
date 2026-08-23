@@ -239,6 +239,31 @@ public struct Repo: Sendable {
         }
     }
 
+    /// Deletes every row the query's predicate matches, in one statement.
+    /// Returns how many were deleted — zero is a normal answer, not an
+    /// error, because "nothing matched" is a legitimate outcome for a
+    /// predicate in a way it is not for a specific model's primary key.
+    ///
+    /// ```swift
+    /// let purged = try await repo.delete(Session.where { $0.expiresAt < .now })
+    /// ```
+    ///
+    /// A query with no predicate deletes **every row in the table** — that
+    /// is what `Session.all` means, and it is honored, not second-guessed.
+    ///
+    /// - Throws: ``HangarError/bulkWriteClause(table:operation:clause:)``
+    ///   if the query carries LIMIT, OFFSET, ORDER BY, GROUP BY, HAVING, or
+    ///   DISTINCT — DELETE cannot honor them, and dropping them silently
+    ///   would delete rows you did not ask it to.
+    @discardableResult
+    public func delete<M: Table, R>(_ query: Query<M, R>) async throws -> Int {
+        let statement = try SQLRenderer.delete(query)
+        let sequence = try await execute(statement.postgresQuery(), intent: .write, operation: "delete")
+        var deleted = 0
+        for try await _ in sequence { deleted += 1 }
+        return deleted
+    }
+
     // MARK: Changeset writes — minimal, validated
 
     /// Inserts a validated changeset: only its changed fields appear in the

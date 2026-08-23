@@ -17,7 +17,6 @@ import PostgresNIO
 public protocol ColumnCodable: PostgresEncodable, PostgresDecodable, Sendable {}
 
 // The stock column types: primitives, UUID, Date, Data.
-// Arrays arrive with Phase 4/5 alongside the operators that make them useful.
 extension Bool: ColumnCodable {}
 extension Int: ColumnCodable {}
 extension Int16: ColumnCodable {}
@@ -30,6 +29,31 @@ extension UUID: ColumnCodable {}
 extension Date: ColumnCodable {}
 extension Data: ColumnCodable {}
 extension Decimal: ColumnCodable {}
+
+/// Array columns — `integer[]`, `text[]`, `uuid[]` and friends:
+///
+/// ```swift
+/// @Entity("posts")
+/// struct Post {
+///     @ID var id: UUID
+///     @Column var tags: [String]        // text[]
+/// }
+/// ```
+///
+/// Rides directly on PostgresNIO's array codings, so the supported element
+/// types are exactly the ones PostgresNIO can put in and read out of a
+/// Postgres array: `Bool`, `Int`, `Int16`, `Int32`, `Int64`, `Float`,
+/// `Double`, `String`, `UUID`, and `Date`.
+///
+/// `Decimal` and `Data` are `ColumnCodable` as scalars but have no array
+/// coding in PostgresNIO, so `[Decimal]` (`numeric[]`) and `[Data]`
+/// (`bytea[]`) columns are not supported — that is an upstream limitation,
+/// not a Hangar policy.
+extension Array: ColumnCodable
+where
+    Element: ColumnCodable & PostgresArrayEncodable & PostgresArrayDecodable,
+    Element == Element._DecodableType
+{}
 
 // MARK: - PostgresEnum
 

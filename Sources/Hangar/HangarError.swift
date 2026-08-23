@@ -47,6 +47,14 @@ public enum HangarError: Error, Sendable, CustomStringConvertible {
     /// second would silently shadow the first.
     case duplicateMultiStep(name: String)
 
+    /// A Multi step read a key whose step hasn't run — ordered after the
+    /// reader, or never added to the Multi at all.
+    case multiValueMissing(key: String)
+
+    /// Two `MultiKey`s share a name but disagree on type, so the stored
+    /// result cannot be returned as the type the reader asked for.
+    case multiValueTypeMismatch(key: String, stored: String, requested: String)
+
     /// An unloaded association was accessed via `Loadable.get` (design
     /// ). Deterministic and loud, never a silent query.
     case notPreloaded(association: String)
@@ -74,6 +82,13 @@ public enum HangarError: Error, Sendable, CustomStringConvertible {
     /// A dynamic filter value's shape doesn't match its column's type
     /// (e.g. a string for an integer column).
     case invalidFilterValue(table: String, field: String)
+
+    /// A bulk write — `delete(query)` or `update(query, set:)` — was given
+    /// a query carrying a clause the statement cannot honor (LIMIT, ORDER
+    /// BY, GROUP BY...). Refused outright rather than executed with the
+    /// clause silently dropped, because a delete that ignores the LIMIT
+    /// you wrote deletes rows you did not ask it to.
+    case bulkWriteClause(table: String, operation: String, clause: String)
 
     /// Internal invariant: the renderer asked a model for a column its
     /// generated `_bind(for:)` doesn't know. Thrown, not trapped — a bug in
@@ -104,6 +119,10 @@ public enum HangarError: Error, Sendable, CustomStringConvertible {
             return "update(changeset) on \"\(table)\": the changeset has no original, so no primary key identifies the row. Build update changesets with Changeset(original:)."
         case .duplicateMultiStep(let name):
             return "Multi has two steps named \"\(name)\" — step names key the results and must be unique."
+        case .multiValueMissing(let key):
+            return "Multi has no result named \"\(key)\" — a step can only read keys of steps ordered before it."
+        case .multiValueTypeMismatch(let key, let stored, let requested):
+            return "Multi result \"\(key)\" is \(stored), not \(requested) — two MultiKeys share a name with different types."
         case .notPreloaded(let association):
             return "Association \"\(association)\" was not preloaded. Add .preload(\\.\(association)) to the query that fetched this model."
         case .unknownAssociation(let table, let association):
@@ -116,6 +135,8 @@ public enum HangarError: Error, Sendable, CustomStringConvertible {
             return "\"\(field)\" is not a filterable field of \"\(table)\" — dynamic filters only reach columns listed in `filterable`."
         case .invalidFilterValue(let table, let field):
             return "The value for dynamic filter \"\(field)\" on \"\(table)\" doesn't match the column's type."
+        case .bulkWriteClause(let table, let operation, let clause):
+            return "\(operation)(query) on \"\(table)\": the query carries \(clause), which \(operation.uppercased()) cannot honor — bulk writes take only a WHERE. Fetch with the full query and write row by row if you need the other clauses."
         case .unknownColumn(let table, let column):
             return "Internal error: entity \"\(table)\" has no binding for column \"\(column)\". This is a Hangar bug."
         }

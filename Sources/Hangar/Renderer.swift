@@ -296,6 +296,49 @@ enum SQLRenderer {
         return RenderedStatement(sql: sql, binds: writer.binds)
     }
 
+    /// `DELETE FROM ... WHERE <predicate> RETURNING <pk>` — every row the
+    /// query's predicate matches.
+    ///
+    /// Only the predicate participates. A query carrying a clause DELETE
+    /// cannot honor — LIMIT, OFFSET, ORDER BY, GROUP BY, HAVING, DISTINCT —
+    /// throws rather than silently dropping it: a delete that ignores the
+    /// LIMIT you wrote deletes rows you did not ask it to.
+    static func delete<M: Table, R>(_ query: Query<M, R>) throws -> RenderedStatement {
+        try checkBulkWritable(query, operation: "delete")
+        var writer = BindWriter()
+        var sql = "DELETE FROM \(M.schema.quotedName)"
+        appendWhere(query.predicate, to: &sql, writer: &writer)
+        sql += " RETURNING \(M.schema.primaryKey[0].quotedName)"
+        return RenderedStatement(sql: sql, binds: writer.binds)
+    }
+
+    /// Rejects query clauses a bulk write cannot express. Postgres has no
+    /// `DELETE ... LIMIT` or `UPDATE ... ORDER BY`; honoring the WHERE while
+    /// ignoring the rest would be a silent wrong answer of exactly the kind
+    /// this renderer refuses to produce.
+    static func checkBulkWritable<M, R>(_ query: Query<M, R>, operation: String) throws {
+        let unsupported: String?
+        if query.rowLimit != nil {
+            unsupported = "LIMIT"
+        } else if query.rowOffset != nil {
+            unsupported = "OFFSET"
+        } else if !query.orderings.isEmpty {
+            unsupported = "ORDER BY"
+        } else if !query.grouping.isEmpty {
+            unsupported = "GROUP BY"
+        } else if query.having != nil {
+            unsupported = "HAVING"
+        } else if query.isDistinct {
+            unsupported = "DISTINCT"
+        } else {
+            unsupported = nil
+        }
+        if let unsupported {
+            throw HangarError.bulkWriteClause(
+                table: M.schema.name, operation: operation, clause: unsupported)
+        }
+    }
+
     // MARK: Expression rendering
 
     static func appendWhere(_ predicate: Predicate?, to sql: inout String, writer: inout BindWriter) {
@@ -337,6 +380,14 @@ enum SQLRenderer {
                     text += sql
                 case .bind(let bind):
                     text += writer.placeholder(bind)
+                case .column(let table, let name):
+                    // Same rule as SQLExpression.column above: qualified in
+                    // multi-table scopes, bare otherwise.
+                    if writer.qualified, !table.isEmpty {
+                        text += "\(quote(table)).\(quote(name))"
+                    } else {
+                        text += quote(name)
+                    }
                 }
             }
             return text + ")"

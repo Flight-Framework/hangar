@@ -149,14 +149,14 @@ let repo = Repo(connection: connection)
 
 ## What is not here
 
-No migrations — use a migration tool. No bulk `delete(query)` or
-`update(query, set:)` yet; writes are one row at a time by primary key. No
-CTEs, no `DISTINCT ON`, no three-table joins or self-joins, no `@HasMany(through:)`,
-no transaction isolation levels, and no escape hatch for running arbitrary SQL
-*inside* a `transaction { }`.
+No migrations — use a migration tool. No bulk `update(query, set:)` yet
+(bulk `delete(query)` exists). No CTEs, no `DISTINCT ON`, no three-table
+joins or self-joins, no `@HasMany(through:)`, no transaction isolation
+levels, and no escape hatch for running arbitrary SQL *inside* a
+`transaction { }`.
 
 Those are real gaps rather than statements of principle. The ones most likely
-to bite are bulk writes and the in-transaction escape hatch.
+to bite are bulk update and the in-transaction escape hatch.
 
 ## Documentation
 

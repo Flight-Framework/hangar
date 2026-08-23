@@ -25,17 +25,17 @@ struct MultiIntegrationTests {
             let multi = Multi()
                 .insert(K.post, postChangeset(title: "multi post"))
                 .insert(K.event) { values in
-                    Changeset(Event.self).change(\.name, "event for \(values[K.post].title)")
+                    Changeset(Event.self).change(\.name, "event for \(try values[K.post].title)")
                 }
                 .run(K.summary) { values in
-                    "\(values[K.post].title) / \(values[K.event].name)"
+                    "\(try values[K.post].title) / \(try values[K.event].name)"
                 }
 
             switch try await repo.run(multi) {
             case .success(let values):
-                #expect(values[K.post].title == "multi post")
-                #expect(values[K.event].name == "event for multi post")
-                #expect(values[K.summary] == "multi post / event for multi post")
+                #expect(try values[K.post].title == "multi post")
+                #expect(try values[K.event].name == "event for multi post")
+                #expect(try values[K.summary] == "multi post / event for multi post")
             case .failure(let failure):
                 Issue.record("unexpected failure at step '\(failure.key)': \(failure.error)")
             }
@@ -65,7 +65,7 @@ struct MultiIntegrationTests {
                 #expect(failure.error is HangarError)
                 // The doomed insert had completed before the failure —
                 // and was rolled back with it.
-                #expect(failure.completed[K.post].title == "doomed")
+                #expect(try failure.completed[K.post].title == "doomed")
             }
             let count = try await repo.count(Post.all)
             #expect(count == 0)
@@ -84,7 +84,7 @@ struct MultiIntegrationTests {
                 }
             switch try await repo.run(multi) {
             case .success(let values):
-                #expect(values[K.count] == 1)
+                #expect(try values[K.count] == 1)
             case .failure(let failure):
                 Issue.record("unexpected failure at '\(failure.key)': \(failure.error)")
             }
@@ -98,7 +98,8 @@ struct MultiIntegrationTests {
             let multi = Multi()
                 .delete(K.ghost) { _ in existing }
                 .run { values in
-                    #expect(values[K.ghost].title == "to delete")
+                    let ghost = try values[K.ghost]
+                    #expect(ghost.title == "to delete")
                 }
             switch try await repo.run(multi) {
             case .success:
@@ -134,7 +135,7 @@ struct MultiIntegrationTests {
             }
             switch try await repo.run(writes.merging(checks)) {
             case .success(let values):
-                #expect(values[K.count] == 1)
+                #expect(try values[K.count] == 1)
             case .failure(let failure):
                 Issue.record("unexpected failure at '\(failure.key)': \(failure.error)")
             }
