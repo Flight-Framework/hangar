@@ -46,9 +46,58 @@ enum TestDatabaseError: Error {
     case notConfigured
 }
 
+
+/// Serializes every test that touches the database.
+///
+/// `withRepo` truncates the fixture tables, so two suites running at the same
+/// time delete each other's rows — and swift-testing runs suites in parallel.
+/// `.serialized` on a suite only orders the tests *within* it, so the barrier
+/// has to be here, around the shared resource itself.
+///
+/// This was latent rather than new: it stayed hidden while the integration
+/// suites were few and while CI ran without HANGAR_TEST_DATABASE_URL, where
+/// every one of them skips.
+actor DatabaseLock {
+    static let shared = DatabaseLock()
+
+    private var busy = false
+    private var waiting: [CheckedContinuation<Void, Never>] = []
+
+    private func acquire() async {
+        if !busy {
+            busy = true
+            return
+        }
+        await withCheckedContinuation { waiting.append($0) }
+    }
+
+    private func release() {
+        if waiting.isEmpty {
+            busy = false
+        } else {
+            waiting.removeFirst().resume()
+        }
+    }
+
+    /// Runs `body` with exclusive use of the fixture tables.
+    func exclusive<T: Sendable>(_ body: @Sendable () async throws -> T) async rethrows -> T {
+        await acquire()
+        defer { release() }
+        return try await body()
+    }
+}
+
 /// Runs `body` with a started client and a `Repo` on it, ensuring the
 /// fixture schema exists and the tables are empty.
-func withRepo<T: Sendable>(_ body: (Repo) async throws -> T) async throws -> T {
+func withRepo<T: Sendable>(_ body: @Sendable (Repo) async throws -> T) async throws -> T {
+    try await DatabaseLock.shared.exclusive {
+        try await withRepoUnlocked(body)
+    }
+}
+
+private func withRepoUnlocked<T: Sendable>(
+    _ body: @Sendable (Repo) async throws -> T
+) async throws -> T {
     let client = PostgresClient(configuration: try TestDatabase.clientConfiguration())
     return try await withThrowingTaskGroup(of: Void.self) { group in
         group.addTask { await client.run() }
@@ -72,7 +121,17 @@ func withRepo<T: Sendable>(_ body: (Repo) async throws -> T) async throws -> T {
 func withRepo<T: Sendable>(
     logger: Logger,
     diagnostics: QueryDiagnostics,
-    _ body: (Repo) async throws -> T
+    _ body: @Sendable (Repo) async throws -> T
+) async throws -> T {
+    try await DatabaseLock.shared.exclusive {
+        try await withRepoUnlocked(logger: logger, diagnostics: diagnostics, body)
+    }
+}
+
+private func withRepoUnlocked<T: Sendable>(
+    logger: Logger,
+    diagnostics: QueryDiagnostics,
+    _ body: @Sendable (Repo) async throws -> T
 ) async throws -> T {
     let client = PostgresClient(configuration: try TestDatabase.clientConfiguration())
     return try await withThrowingTaskGroup(of: Void.self) { group in

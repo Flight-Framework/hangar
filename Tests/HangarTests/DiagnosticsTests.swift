@@ -13,7 +13,7 @@ import Testing
 struct DiagnosticsTests {
 
     private func repoWithRecorder(
-        _ diagnostics: QueryDiagnostics, _ body: (Repo, LogRecorder) async throws -> Void
+        _ diagnostics: QueryDiagnostics, _ body: @Sendable (Repo, LogRecorder) async throws -> Void
     ) async throws {
         let recorder = LogRecorder()
         var logger = Logger(label: "hangar.diagnostics.test") { _ in
