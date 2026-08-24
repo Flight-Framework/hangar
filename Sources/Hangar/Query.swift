@@ -19,6 +19,11 @@ public struct Query<Model: Table, Result: Sendable>: Sendable {
     var rowLock: RowLock? = nil
     /// Which rows this query sees when the model is soft-deletable.
     var deletedRows: DeletedRowScope = .excluded
+    /// Named subqueries rendered into a leading `WITH` clause, in order.
+    var ctes: [CommonTableExpression] = []
+    /// When set, the query reads `FROM "<name>" AS "<entity table>"`
+    /// instead of from the entity's own table.
+    var fromCTE: String?
     /// Installed by `.select {}`: the SELECT list plus the row
     /// decoder for `Result`. Nil means "whole model" — every schema column
     /// in order, decoded by the generated `init(from:)`.
@@ -40,6 +45,12 @@ public struct Query<Model: Table, Result: Sendable>: Sendable {
         next.isDistinct = isDistinct
         next.distinctOn = distinctOn
         next.rowLock = rowLock
+        // Carried, not dropped: a projection over `withDeleted()` must keep
+        // seeing deleted rows. Losing it here would answer a different
+        // question than the one asked, silently.
+        next.deletedRows = deletedRows
+        next.ctes = ctes
+        next.fromCTE = fromCTE
         next.selection = selection
         return next
     }

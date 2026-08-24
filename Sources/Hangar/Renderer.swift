@@ -62,6 +62,7 @@ enum SQLRenderer {
     static func selectText<M, R>(
         _ query: Query<M, R>, writer: inout BindWriter, overrideList: String? = nil
     ) -> String {
+        let prefix = withClause(query.ctes, writer: &writer)
         let list: String
         if let overrideList {
             list = overrideList
@@ -75,7 +76,7 @@ enum SQLRenderer {
         } else {
             list = M.schema.selectList
         }
-        var sql = "SELECT \(distinctClause(query.isDistinct, query.distinctOn, writer: &writer))\(list) FROM \(M.schema.quotedName)"
+        var sql = "\(prefix)SELECT \(distinctClause(query.isDistinct, query.distinctOn, writer: &writer))\(list) FROM \(source(M.self, cte: query.fromCTE))"
         appendWhere(query.effectivePredicate, to: &sql, writer: &writer)
         if !query.grouping.isEmpty {
             let terms = query.grouping
@@ -120,7 +121,8 @@ enum SQLRenderer {
                 sql: "SELECT count(*) FROM (\(inner)) AS \(quote("hangar_count"))",
                 binds: writer.binds)
         }
-        var sql = "SELECT count(*) FROM \(M.schema.quotedName)"
+        let prefix = withClause(query.ctes, writer: &writer)
+        var sql = "\(prefix)SELECT count(*) FROM \(source(M.self, cte: query.fromCTE))"
         appendWhere(query.effectivePredicate, to: &sql, writer: &writer)
         return RenderedStatement(sql: sql, binds: writer.binds)
     }
@@ -138,9 +140,10 @@ enum SQLRenderer {
                 overrideList: countingList(for: stripped, writer: &writer))
             return RenderedStatement(sql: "SELECT EXISTS (\(inner))", binds: writer.binds)
         }
-        var inner = "SELECT 1 FROM \(M.schema.quotedName)"
+        let prefix = withClause(query.ctes, writer: &writer)
+        var inner = "SELECT 1 FROM \(source(M.self, cte: query.fromCTE))"
         appendWhere(query.effectivePredicate, to: &inner, writer: &writer)
-        return RenderedStatement(sql: "SELECT EXISTS (\(inner))", binds: writer.binds)
+        return RenderedStatement(sql: "\(prefix)SELECT EXISTS (\(inner))", binds: writer.binds)
     }
 
     /// `""`, `"DISTINCT "`, or `"DISTINCT ON (...) "` — shared by every
@@ -401,14 +404,17 @@ enum SQLRenderer {
     /// `DELETE FROM ... WHERE <predicate> RETURNING <pk>` — every row the
     /// query's predicate matches.
     ///
-    /// Only the predicate participates. A query carrying a clause DELETE
-    /// cannot honor — LIMIT, OFFSET, ORDER BY, GROUP BY, HAVING, DISTINCT —
-    /// throws rather than silently dropping it: a delete that ignores the
-    /// LIMIT you wrote deletes rows you did not ask it to.
+    /// Only the predicate and any attached CTEs participate. A query
+    /// carrying a clause DELETE cannot honor — LIMIT, OFFSET, ORDER BY,
+    /// GROUP BY, HAVING, DISTINCT — throws rather than silently dropping
+    /// it: a delete that ignores the LIMIT you wrote deletes rows you did
+    /// not ask it to. So does one that `reading(from:)` a CTE, which would
+    /// otherwise delete from the entity's real table instead.
     static func delete<M: Table, R>(_ query: Query<M, R>) throws -> RenderedStatement {
         try checkBulkWritable(query, operation: "delete")
         var writer = BindWriter()
-        var sql = "DELETE FROM \(M.schema.quotedName)"
+        var sql = withClause(query.ctes, writer: &writer)
+        sql += "DELETE FROM \(M.schema.quotedName)"
         appendWhere(query.effectivePredicate, to: &sql, writer: &writer)
         sql += " RETURNING \(M.schema.primaryKey[0].quotedName)"
         return RenderedStatement(sql: sql, binds: writer.binds)
@@ -428,10 +434,12 @@ enum SQLRenderer {
             throw HangarError.noUpdatableColumns(table: M.schema.name)
         }
         var writer = BindWriter()
+        // WITH first, so its binds are numbered in text order.
+        let prefix = withClause(query.ctes, writer: &writer)
         let sets = assignments
             .map { "\(quote($0.name)) = \(render($0.expression, writer: &writer))" }
             .joined(separator: ", ")
-        var sql = "UPDATE \(M.schema.quotedName) SET \(sets)"
+        var sql = "\(prefix)UPDATE \(M.schema.quotedName) SET \(sets)"
         appendWhere(query.effectivePredicate, to: &sql, writer: &writer)
         sql += " RETURNING \(M.schema.primaryKey[0].quotedName)"
         return RenderedStatement(sql: sql, binds: writer.binds)
@@ -460,6 +468,12 @@ enum SQLRenderer {
         } else if let lock = query.rowLock {
             // DELETE and UPDATE already take their own row locks.
             unsupported = lock.rawValue
+        } else if query.fromCTE != nil {
+            // A CTE can *feed* a bulk write, but it cannot be its target:
+            // `DELETE FROM "cte"` deletes nothing real. Attaching the CTE
+            // with `with` and referencing it from the predicate is the
+            // shape that works.
+            unsupported = "reading(from:)"
         } else {
             unsupported = nil
         }
@@ -474,25 +488,67 @@ enum SQLRenderer {
     /// parenthesized: `(SET LOCAL ...)` is not a statement.
     static func statement(_ fragment: SQLFragment) -> RenderedStatement {
         var writer = BindWriter()
-        var sql = ""
-        for part in fragment.parts {
-            switch part {
-            case .sql(let text):
-                sql += text
-            case .bind(let bind):
-                sql += writer.placeholder(bind)
-            case .column(let table, let name):
-                if writer.qualified, !table.isEmpty {
-                    sql += "\(quote(table)).\(quote(name))"
-                } else {
-                    sql += quote(name)
-                }
-            }
-        }
+        let sql = renderParts(fragment.parts, writer: &writer)
         return RenderedStatement(sql: sql, binds: writer.binds)
     }
 
     // MARK: Expression rendering
+
+    /// `WITH a AS (...), b AS (...) ` — empty when there are no CTEs.
+    ///
+    /// Rendered before anything else in the statement so its binds are
+    /// numbered in text order. `RECURSIVE` is a property of the whole
+    /// `WITH` list in Postgres, not of one member, so one recursive CTE
+    /// puts the keyword in front of all of them — which is legal for the
+    /// non-recursive members and changes nothing about them.
+    static func withClause(
+        _ ctes: [CommonTableExpression], writer: inout BindWriter
+    ) -> String {
+        guard !ctes.isEmpty else { return "" }
+        let recursive = ctes.contains(where: \.isRecursive) ? "RECURSIVE " : ""
+        let bodies = ctes.map { cte -> String in
+            let text: String
+            switch cte.body {
+            case .fragment(let parts):
+                text = renderParts(parts, writer: &writer)
+            case .query(let render):
+                text = render(&writer)
+            }
+            return "\(quote(cte.name)) AS (\(text))"
+        }
+        return "WITH \(recursive)\(bodies.joined(separator: ", ")) "
+    }
+
+    /// What a select reads from: the entity's table, or a CTE aliased back
+    /// to the entity's table name so every column qualification downstream
+    /// still resolves.
+    static func source<M: Table>(_ type: M.Type, cte: String?) -> String {
+        guard let cte else { return M.schema.quotedName }
+        return "\(quote(cte)) AS \(M.schema.quotedName)"
+    }
+
+    /// Fragment parts as SQL, appending binds — the unparenthesized form,
+    /// for a CTE body or any other whole-statement position. The predicate
+    /// path in ``render(_:writer:)`` parenthesizes instead, because a
+    /// fragment predicate has to compose under `AND`/`OR`.
+    static func renderParts(_ parts: [SQLFragment.Part], writer: inout BindWriter) -> String {
+        var text = ""
+        for part in parts {
+            switch part {
+            case .sql(let sql):
+                text += sql
+            case .bind(let bind):
+                text += writer.placeholder(bind)
+            case .column(let table, let name):
+                if writer.qualified, !table.isEmpty {
+                    text += "\(quote(table)).\(quote(name))"
+                } else {
+                    text += quote(name)
+                }
+            }
+        }
+        return text
+    }
 
     static func appendWhere(_ predicate: Predicate?, to sql: inout String, writer: inout BindWriter) {
         guard let predicate else { return }
@@ -525,25 +581,9 @@ enum SQLRenderer {
             return "EXISTS (\(subquery.render(&writer)))"
         case .fragment(let parts):
             // Parenthesized so a fragment predicate composes under AND/OR
-            // without precedence surprises.
-            var text = "("
-            for part in parts {
-                switch part {
-                case .sql(let sql):
-                    text += sql
-                case .bind(let bind):
-                    text += writer.placeholder(bind)
-                case .column(let table, let name):
-                    // Same rule as SQLExpression.column above: qualified in
-                    // multi-table scopes, bare otherwise.
-                    if writer.qualified, !table.isEmpty {
-                        text += "\(quote(table)).\(quote(name))"
-                    } else {
-                        text += quote(name)
-                    }
-                }
-            }
-            return text + ")"
+            // without precedence surprises. `renderParts` is the same
+            // rendering unparenthesized, for whole-statement positions.
+            return "(" + renderParts(parts, writer: &writer) + ")"
         case .not(let operand):
             return "NOT (\(render(operand, writer: &writer)))"
         case .isNull(let operand):

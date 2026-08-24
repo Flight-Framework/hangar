@@ -115,7 +115,7 @@ private func withRepoUnlocked<T: Sendable>(
         do {
             try await TestSchema.shared.ensure(client)
             _ = try await client.query(
-                #"TRUNCATE "hangar_posts", "hangar_events", "hangar_authors", "hangar_comments", "hangar_profiles", "hangar_kv", "hangar_tagged", "hangar_tags", "hangar_post_tags", "hangar_tagged_posts", "hangar_files""#,
+                #"TRUNCATE "hangar_posts", "hangar_events", "hangar_authors", "hangar_comments", "hangar_profiles", "hangar_kv", "hangar_tagged", "hangar_tags", "hangar_post_tags", "hangar_tagged_posts", "hangar_files", "hangar_nodes""#,
                 logger: nil)
             let result = try await body(Repo(client: client))
             group.cancelAll()
@@ -150,7 +150,7 @@ private func withRepoUnlocked<T: Sendable>(
         do {
             try await TestSchema.shared.ensure(client)
             _ = try await client.query(
-                #"TRUNCATE "hangar_posts", "hangar_events", "hangar_authors", "hangar_comments", "hangar_profiles", "hangar_kv", "hangar_tagged", "hangar_tags", "hangar_post_tags", "hangar_tagged_posts", "hangar_files""#,
+                #"TRUNCATE "hangar_posts", "hangar_events", "hangar_authors", "hangar_comments", "hangar_profiles", "hangar_kv", "hangar_tagged", "hangar_tags", "hangar_post_tags", "hangar_tagged_posts", "hangar_files", "hangar_nodes""#,
                 logger: nil)
             var repo = Repo(client: client, logger: logger)
             repo.diagnostics = diagnostics
@@ -289,6 +289,14 @@ actor TestSchema {
             CREATE TABLE "hangar_tagged_posts" (
                 "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
                 "title" text NOT NULL
+            )
+            """#,
+            // Self-referencing, for recursive CTEs.
+            #"""
+            CREATE TABLE "hangar_nodes" (
+                "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+                "name" text NOT NULL,
+                "parent_id" uuid
             )
             """#,
         ]

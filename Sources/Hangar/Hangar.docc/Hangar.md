@@ -61,6 +61,7 @@ just the problem, because someone is usually reading it during an incident.
 - ``JoinedQuery``
 - ``JoinedQuery3``
 - ``Aliased``
+- ``CommonTableExpression``
 - ``Predicate``
 - ``DynamicFilterValue``
 

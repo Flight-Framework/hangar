@@ -168,3 +168,12 @@ struct StoredFile: Sendable, Equatable {
     @Column("owner_id") var ownerID: UUID
     @Deleted @Column("deleted_at") var deletedAt: Date?
 }
+
+/// Self-referencing, for recursive CTEs: a tree with no fixed depth is the
+/// query shape a non-recursive query genuinely cannot express.
+@Entity("hangar_nodes")
+struct Node: Sendable, Equatable {
+    @ID let id: UUID
+    var name: String
+    @Column("parent_id") var parentID: UUID?
+}

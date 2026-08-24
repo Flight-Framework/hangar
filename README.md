@@ -368,10 +368,46 @@ What it decides, and what it refuses to:
 The output is meant to be read, edited, and committed — a starting point,
 not a build artifact.
 
+## Common table expressions
+
+`with` names a subquery; `reading(from:)` makes it the query's source. The
+CTE renders `FROM "name" AS "entity_table"`, so every column reference,
+ordering, predicate and preload downstream resolves against it unchanged:
+
+```swift
+let busy = Post.all
+    .with("busy", as: Post.where { $0.viewCount > 50 })
+    .reading(from: "busy")
+    .order { $0.title.asc() }
+
+try await repo.all(busy)        // [Post]
+```
+
+A recursive CTE takes a typed anchor and a raw step — the step is the half
+that refers to the CTE being defined, which no entity's columns can
+describe:
+
+```swift
+let subtree = Node.all
+    .withRecursive(
+        "subtree",
+        anchor: Node.where { $0.id == rootID },
+        recursive: """
+            SELECT "hangar_nodes".* FROM "hangar_nodes" \
+            JOIN "subtree" ON "hangar_nodes"."parent_id" = "subtree"."id"
+            """)
+    .reading(from: "subtree")
+```
+
+Interpolations in a raw body are binds, not text, exactly as in a fragment
+predicate. `count` and `exists` carry the CTE. A bulk `delete` or `update`
+may be *fed* by one — `WITH doomed AS (...) DELETE ... WHERE id IN (SELECT
+...)` — but cannot target one: `reading(from:)` on a bulk write throws
+rather than quietly writing to the entity's real table.
+
 ## What is not here
 
-No migrations — use a migration tool. No CTEs (`WITH ... AS`) — the one
-remaining query-shape gap, deferred to its own pass.
+No migrations — use a migration tool.
 
 ## Documentation
 
