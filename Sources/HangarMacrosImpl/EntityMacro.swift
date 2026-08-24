@@ -134,7 +134,7 @@ public struct EntityMacro: MemberMacro, ExtensionMacro {
     ) -> DeclSyntax {
         let definitions = properties
             .map {
-                #"        Hangar.ColumnDefinition(name: "\#($0.columnName)", isPrimaryKey: \#($0.isPrimaryKey), isGenerated: \#($0.isGenerated)),"#
+                #"        Hangar.ColumnDefinition(name: "\#($0.columnName)", isPrimaryKey: \#($0.isPrimaryKey), isGenerated: \#($0.isGenerated), isDeletedAt: \#($0.isDeletedAt)),"#
             }
             .joined(separator: "\n")
         return """

@@ -50,6 +50,19 @@ public macro Column(_ name: String) =
 public macro JSONB() =
     #externalMacro(module: "HangarMacrosImpl", type: "JSONBMacro")
 
+/// Marks the column that records when a row was soft-deleted, making the
+/// entity soft-deletable: `@Deleted var deletedAt: Date?`.
+///
+/// Once a model has one, reads exclude deleted rows by default and
+/// `repo.delete` stamps the column instead of issuing a `DELETE`. Both are
+/// opt-out — see ``Query/withDeleted()`` and ``Repo/forceDelete(_:)``.
+///
+/// The property must be an optional date: `nil` is what "not deleted" means,
+/// and a non-optional column could not express it.
+@attached(peer)
+public macro Deleted() =
+    #externalMacro(module: "HangarMacrosImpl", type: "DeletedMacro")
+
 /// A one-to-many association: `foreignKey` is the child
 /// column that references this table (the parent's primary key by
 /// default). The property must be `var name: Loadable<[Child]>` — not a

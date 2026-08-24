@@ -152,3 +152,13 @@ struct TaggedPost: Sendable, Equatable {
     @HasMany(through: PostTag.self, from: \PostTag.postID, to: \PostTag.tagID)
     var tags: Loadable<[Tag]>
 }
+
+/// A soft-deletable fixture. `deletedAt` being optional is the whole
+/// mechanism: nil means live.
+@Entity("hangar_files")
+struct StoredFile: Sendable, Equatable {
+    @ID let id: UUID
+    var name: String
+    var sizeBytes: Int
+    @Deleted @Column("deleted_at") var deletedAt: Date?
+}

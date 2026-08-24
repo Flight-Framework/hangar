@@ -10,6 +10,7 @@ struct HangarMacrosPlugin: CompilerPlugin {
         IDMacro.self,
         ColumnNameMacro.self,
         JSONBMacro.self,
+        DeletedMacro.self,
         HasManyMacro.self,
         BelongsToMacro.self,
         HasOneMacro.self,

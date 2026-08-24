@@ -53,6 +53,7 @@ struct EntityProperty {
     let isOptional: Bool
     let columnName: String
     let isPrimaryKey: Bool
+    let isDeletedAt: Bool
     let isGenerated: Bool
     let isJSONB: Bool
     /// The initializer expression, if the property declares one — becomes
@@ -161,6 +162,7 @@ func parseEntityMembers(
         }
 
         var isPrimaryKey = false
+        var isDeletedAt = false
         var isGenerated = false
         var isJSONB = false
         var explicitName: String?
@@ -187,6 +189,8 @@ func parseEntityMembers(
                 explicitName = name
             case "JSONB":
                 isJSONB = true
+            case "Deleted":
+                isDeletedAt = true
             default:
                 continue
             }
@@ -210,6 +214,7 @@ func parseEntityMembers(
                     isOptional: optionalWrapped != nil,
                     columnName: explicitName ?? snakeCase(pattern.identifier.text),
                     isPrimaryKey: isPrimaryKey,
+                    isDeletedAt: isDeletedAt,
                     isGenerated: isGenerated,
                     isJSONB: isJSONB,
                     defaultValueText: binding.initializer?.value.trimmedDescription)))
@@ -239,7 +244,7 @@ private func parseAssociation(
 ) -> EntityAssociation? {
     let hasColumnAttribute = variable.attributes.contains { attribute in
         guard let attr = attribute.as(AttributeSyntax.self) else { return false }
-        return ["ID", "Column", "JSONB"].contains(attr.attributeName.trimmedDescription)
+        return ["ID", "Column", "JSONB", "Deleted"].contains(attr.attributeName.trimmedDescription)
     }
     if hasColumnAttribute {
         context.diagnoseError(

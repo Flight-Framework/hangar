@@ -1,3 +1,4 @@
+import Foundation
 import Logging
 import Metrics
 import PostgresNIO
@@ -297,11 +298,58 @@ public struct Repo: Sendable {
     /// Deletes the model's row by primary key. Throws
     /// `HangarError.staleModel` if the row no longer exists.
     public func delete<M: Table>(_ model: M) async throws {
+        // Soft when the model says so. A `@Deleted` column is a statement
+        // that rows are not to be destroyed, and honouring it only when the
+        // caller remembers a different method name would make the guarantee
+        // worthless — `forceDelete` is the way to mean the other thing.
+        if M.isSoftDeletable {
+            try await softDelete(model)
+            return
+        }
+        try await forceDelete(model)
+    }
+
+    /// Removes the row outright, whether or not the model is soft-deletable.
+    ///
+    /// The escape hatch for the cases a soft delete cannot serve: an erasure
+    /// request, a bad import, a test tearing down its fixtures.
+    public func forceDelete<M: Table>(_ model: M) async throws {
         let statement = try SQLRenderer.delete(model)
         let sequence = try await execute(statement.postgresQuery(), intent: .write, operation: "delete")
         var deleted = 0
         for try await _ in sequence { deleted += 1 }
         guard deleted > 0 else {
+            throw HangarError.staleModel(table: M.schema.name)
+        }
+    }
+
+    /// Stamps the model's `@Deleted` column, leaving the row in place.
+    ///
+    /// Throws ``HangarError/staleModel(table:)`` when nothing was stamped —
+    /// the row is gone, or was already deleted. Deleting twice is a fact
+    /// worth surfacing rather than a silent overwrite of the timestamp.
+    public func softDelete<M: Table>(_ model: M, at instant: Date = Date()) async throws {
+        let statement = try SQLRenderer.softDelete(model, at: instant)
+        let sequence = try await execute(
+            statement.postgresQuery(), intent: .write, operation: "soft_delete")
+        var affected = 0
+        for try await _ in sequence { affected += 1 }
+        guard affected > 0 else {
+            throw HangarError.staleModel(table: M.schema.name)
+        }
+    }
+
+    /// Clears the model's `@Deleted` column, bringing the row back.
+    ///
+    /// Throws ``HangarError/staleModel(table:)`` when nothing was restored —
+    /// no such row, or it was not deleted to begin with.
+    public func restore<M: Table>(_ model: M) async throws {
+        let statement = try SQLRenderer.restore(model)
+        let sequence = try await execute(
+            statement.postgresQuery(), intent: .write, operation: "restore")
+        var affected = 0
+        for try await _ in sequence { affected += 1 }
+        guard affected > 0 else {
             throw HangarError.staleModel(table: M.schema.name)
         }
     }

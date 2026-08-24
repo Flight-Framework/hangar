@@ -1,3 +1,4 @@
+import Foundation
 import Changesets
 import PostgresNIO
 
@@ -75,7 +76,7 @@ enum SQLRenderer {
             list = M.schema.selectList
         }
         var sql = "SELECT \(distinctClause(query.isDistinct, query.distinctOn, writer: &writer))\(list) FROM \(M.schema.quotedName)"
-        appendWhere(query.predicate, to: &sql, writer: &writer)
+        appendWhere(query.effectivePredicate, to: &sql, writer: &writer)
         if !query.grouping.isEmpty {
             let terms = query.grouping
                 .map { render($0, writer: &writer) }
@@ -120,7 +121,7 @@ enum SQLRenderer {
                 binds: writer.binds)
         }
         var sql = "SELECT count(*) FROM \(M.schema.quotedName)"
-        appendWhere(query.predicate, to: &sql, writer: &writer)
+        appendWhere(query.effectivePredicate, to: &sql, writer: &writer)
         return RenderedStatement(sql: sql, binds: writer.binds)
     }
 
@@ -138,7 +139,7 @@ enum SQLRenderer {
             return RenderedStatement(sql: "SELECT EXISTS (\(inner))", binds: writer.binds)
         }
         var inner = "SELECT 1 FROM \(M.schema.quotedName)"
-        appendWhere(query.predicate, to: &inner, writer: &writer)
+        appendWhere(query.effectivePredicate, to: &inner, writer: &writer)
         return RenderedStatement(sql: "SELECT EXISTS (\(inner))", binds: writer.binds)
     }
 
@@ -202,7 +203,7 @@ enum SQLRenderer {
         writer.qualified = true
         defer { writer.qualified = wasQualified }
         var sql = "SELECT 1 FROM \(M.schema.quotedName)"
-        appendWhere(query.predicate, to: &sql, writer: &writer)
+        appendWhere(query.effectivePredicate, to: &sql, writer: &writer)
         return sql
     }
 
@@ -346,6 +347,44 @@ enum SQLRenderer {
         }
     }
 
+    /// `UPDATE ... SET <deletedAt> = $n WHERE <pk> AND <deletedAt> IS NULL`
+    /// — a soft delete, stamping rather than removing.
+    ///
+    /// The `IS NULL` guard makes it honest about repeats: deleting an
+    /// already-deleted row affects nothing, so the caller learns it was
+    /// already gone rather than silently moving the timestamp.
+    static func softDelete<M: Table>(_ model: M, at instant: Date) throws -> RenderedStatement {
+        let schema = M.schema
+        guard let column = schema.deletedAt else {
+            throw HangarError.notSoftDeletable(table: schema.name)
+        }
+        var writer = BindWriter()
+        let stamp = writer.placeholder(SQLBind(instant))
+        let sql = """
+            UPDATE \(schema.quotedName) SET \(column.quotedName) = \(stamp) \
+            WHERE \(try primaryKeyClause(model, schema: schema, writer: &writer)) \
+            AND \(column.quotedName) IS NULL \
+            RETURNING \(schema.primaryKey[0].quotedName)
+            """
+        return RenderedStatement(sql: sql, binds: writer.binds)
+    }
+
+    /// `UPDATE ... SET <deletedAt> = NULL` — undoing a soft delete.
+    static func restore<M: Table>(_ model: M) throws -> RenderedStatement {
+        let schema = M.schema
+        guard let column = schema.deletedAt else {
+            throw HangarError.notSoftDeletable(table: schema.name)
+        }
+        var writer = BindWriter()
+        let sql = """
+            UPDATE \(schema.quotedName) SET \(column.quotedName) = NULL \
+            WHERE \(try primaryKeyClause(model, schema: schema, writer: &writer)) \
+            AND \(column.quotedName) IS NOT NULL \
+            RETURNING \(schema.primaryKey[0].quotedName)
+            """
+        return RenderedStatement(sql: sql, binds: writer.binds)
+    }
+
     static func delete<M: Table>(_ model: M) throws -> RenderedStatement {
         let schema = M.schema
         var writer = BindWriter()
@@ -370,7 +409,7 @@ enum SQLRenderer {
         try checkBulkWritable(query, operation: "delete")
         var writer = BindWriter()
         var sql = "DELETE FROM \(M.schema.quotedName)"
-        appendWhere(query.predicate, to: &sql, writer: &writer)
+        appendWhere(query.effectivePredicate, to: &sql, writer: &writer)
         sql += " RETURNING \(M.schema.primaryKey[0].quotedName)"
         return RenderedStatement(sql: sql, binds: writer.binds)
     }
@@ -393,7 +432,7 @@ enum SQLRenderer {
             .map { "\(quote($0.name)) = \(render($0.expression, writer: &writer))" }
             .joined(separator: ", ")
         var sql = "UPDATE \(M.schema.quotedName) SET \(sets)"
-        appendWhere(query.predicate, to: &sql, writer: &writer)
+        appendWhere(query.effectivePredicate, to: &sql, writer: &writer)
         sql += " RETURNING \(M.schema.primaryKey[0].quotedName)"
         return RenderedStatement(sql: sql, binds: writer.binds)
     }

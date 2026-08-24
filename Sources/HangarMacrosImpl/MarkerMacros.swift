@@ -29,6 +29,17 @@ public struct ColumnNameMacro: PeerMacro {
     }
 }
 
+public struct DeletedMacro: PeerMacro {
+    public static func expansion(
+        of node: AttributeSyntax,
+        providingPeersOf declaration: some DeclSyntaxProtocol,
+        in context: some MacroExpansionContext
+    ) throws -> [DeclSyntax] {
+        validateColumnAttribute(node, declaration, name: "@Deleted", in: context)
+        return []
+    }
+}
+
 public struct JSONBMacro: PeerMacro {
     public static func expansion(
         of node: AttributeSyntax,

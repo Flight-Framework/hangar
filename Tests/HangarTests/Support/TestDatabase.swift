@@ -104,7 +104,7 @@ private func withRepoUnlocked<T: Sendable>(
         do {
             try await TestSchema.shared.ensure(client)
             _ = try await client.query(
-                #"TRUNCATE "hangar_posts", "hangar_events", "hangar_authors", "hangar_comments", "hangar_profiles", "hangar_kv", "hangar_tagged", "hangar_tags", "hangar_post_tags", "hangar_tagged_posts""#,
+                #"TRUNCATE "hangar_posts", "hangar_events", "hangar_authors", "hangar_comments", "hangar_profiles", "hangar_kv", "hangar_tagged", "hangar_tags", "hangar_post_tags", "hangar_tagged_posts", "hangar_files""#,
                 logger: nil)
             let result = try await body(Repo(client: client))
             group.cancelAll()
@@ -139,7 +139,7 @@ private func withRepoUnlocked<T: Sendable>(
         do {
             try await TestSchema.shared.ensure(client)
             _ = try await client.query(
-                #"TRUNCATE "hangar_posts", "hangar_events", "hangar_authors", "hangar_comments", "hangar_profiles", "hangar_kv", "hangar_tagged", "hangar_tags", "hangar_post_tags", "hangar_tagged_posts""#,
+                #"TRUNCATE "hangar_posts", "hangar_events", "hangar_authors", "hangar_comments", "hangar_profiles", "hangar_kv", "hangar_tagged", "hangar_tags", "hangar_post_tags", "hangar_tagged_posts", "hangar_files""#,
                 logger: nil)
             var repo = Repo(client: client, logger: logger)
             repo.diagnostics = diagnostics
@@ -161,6 +161,7 @@ actor TestSchema {
     func ensure(_ client: PostgresClient) async throws {
         guard !done else { return }
         let statements = [
+            #"DROP TABLE IF EXISTS "hangar_files""#,
             #"DROP TABLE IF EXISTS "hangar_posts""#,
             #"DROP TABLE IF EXISTS "hangar_events""#,
             #"DROP TABLE IF EXISTS "hangar_authors""#,
@@ -173,6 +174,14 @@ actor TestSchema {
             #"DROP TABLE IF EXISTS "hangar_tagged_posts""#,
             #"DROP TYPE IF EXISTS "post_status""#,
             #"CREATE TYPE "post_status" AS ENUM ('draft', 'published', 'archived')"#,
+            #"""
+            CREATE TABLE "hangar_files" (
+                "id" uuid PRIMARY KEY,
+                "name" text NOT NULL,
+                "size_bytes" integer NOT NULL,
+                "deleted_at" timestamptz
+            )
+            """#,
             #"""
             CREATE TABLE "hangar_posts" (
                 "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),

@@ -14,6 +14,11 @@ public enum HangarError: Error, Sendable, CustomStringConvertible {
     /// longer identifies a row (deleted concurrently, or never inserted).
     case staleModel(table: String)
 
+    /// A soft-delete operation was asked of a model with no `@Deleted`
+    /// column. Thrown rather than silently hard-deleting, because the two
+    /// are not interchangeable.
+    case notSoftDeletable(table: String)
+
     /// A row arrived with a different column count than the entity's
     /// decoder expects — the statement's column list and the Swift type
     /// disagree. With Phase-1 queries this indicates a schema/entity drift.
@@ -110,6 +115,8 @@ public enum HangarError: Error, Sendable, CustomStringConvertible {
             return "one(...) on \"\(table)\" matched more than one row; use all(...) or add a narrower predicate."
         case .staleModel(let table):
             return "The \"\(table)\" row for this model no longer exists — it was deleted concurrently or never inserted."
+        case .notSoftDeletable(let table):
+            return "\"\(table)\" has no soft-delete column, so it cannot be soft-deleted or restored. Mark one with @Deleted (an optional Date), or use forceDelete to remove the row."
         case .columnCountMismatch(let table, let expected, let got):
             return "Decoding \"\(table)\": the row has \(got) columns but the entity expects \(expected) — the statement's column list and the @Entity type disagree."
         case .columnDecoding(let table, let column, let underlying):

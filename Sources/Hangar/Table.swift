@@ -75,6 +75,10 @@ public struct TableSchema: Sendable {
 
     /// The identity columns — every column flagged primary-key.
     public let primaryKey: [ColumnDefinition]
+
+    /// The soft-delete column, when the entity has one. Its presence is what
+    /// makes reads exclude deleted rows and `delete` stamp rather than remove.
+    public let deletedAt: ColumnDefinition?
     /// Columns included in INSERT statements (everything the database
     /// doesn't generate itself).
     public let insertable: [ColumnDefinition]
@@ -108,6 +112,7 @@ public struct TableSchema: Sendable {
         self.name = name
         self.columns = columns
         self.primaryKey = columns.filter(\.isPrimaryKey)
+        self.deletedAt = columns.first(where: \.isDeletedAt)
         self.insertable = columns.filter { !$0.isGenerated }
         self.updatable = columns.filter { !$0.isGenerated && !$0.isPrimaryKey }
 
@@ -132,6 +137,9 @@ public struct ColumnDefinition: Sendable, Equatable {
     public let name: String
     /// Whether this column is part of the row's identity.
     public let isPrimaryKey: Bool
+
+    /// Whether this column records a soft deletion — see the `@Deleted` macro.
+    public let isDeletedAt: Bool
     /// `@ID(generated: true)`: the database produces the value (identity /
     /// serial / default); the column is excluded from INSERT lists and read
     /// back via RETURNING.
@@ -140,10 +148,14 @@ public struct ColumnDefinition: Sendable, Equatable {
     let quotedName: String
 
     /// Declares one column — called by `@Entity`'s expansion.
-    public init(name: String, isPrimaryKey: Bool = false, isGenerated: Bool = false) {
+    public init(
+        name: String, isPrimaryKey: Bool = false, isGenerated: Bool = false,
+        isDeletedAt: Bool = false
+    ) {
         self.name = name
         self.isPrimaryKey = isPrimaryKey
         self.isGenerated = isGenerated
+        self.isDeletedAt = isDeletedAt
         self.quotedName = SQLRenderer.quote(name)
     }
 

@@ -17,6 +17,8 @@ public struct Query<Model: Table, Result: Sendable>: Sendable {
     var isDistinct = false
     var distinctOn: [SQLExpression] = []
     var rowLock: RowLock? = nil
+    /// Which rows this query sees when the model is soft-deletable.
+    var deletedRows: DeletedRowScope = .excluded
     /// Installed by `.select {}`: the SELECT list plus the row
     /// decoder for `Result`. Nil means "whole model" — every schema column
     /// in order, decoded by the generated `init(from:)`.
