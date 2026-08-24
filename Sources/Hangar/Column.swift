@@ -38,6 +38,14 @@ public struct OrderTerm: Sendable {
     let table: String
     let column: String
     let direction: Direction
+
+    /// Built from schema metadata rather than a typed column — used by
+    /// pagination to impose a deterministic order when the caller gave none.
+    init(table: String, column: String, direction: Direction) {
+        self.table = table
+        self.column = column
+        self.direction = direction
+    }
 }
 
 extension Column {

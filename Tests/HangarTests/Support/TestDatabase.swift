@@ -1,4 +1,5 @@
 import Foundation
+import Logging
 import Hangar
 import PostgresNIO
 import Testing
@@ -57,6 +58,33 @@ func withRepo<T: Sendable>(_ body: (Repo) async throws -> T) async throws -> T {
                 #"TRUNCATE "hangar_posts", "hangar_events", "hangar_authors", "hangar_comments", "hangar_profiles", "hangar_kv", "hangar_tagged", "hangar_tags", "hangar_post_tags", "hangar_tagged_posts""#,
                 logger: nil)
             let result = try await body(Repo(client: client))
+            group.cancelAll()
+            return result
+        } catch {
+            group.cancelAll()
+            throw error
+        }
+    }
+}
+
+/// Like ``withRepo(_:)``, with a logger and diagnostics attached — for the
+/// suites that assert on what Hangar reports rather than on what it returns.
+func withRepo<T: Sendable>(
+    logger: Logger,
+    diagnostics: QueryDiagnostics,
+    _ body: (Repo) async throws -> T
+) async throws -> T {
+    let client = PostgresClient(configuration: try TestDatabase.clientConfiguration())
+    return try await withThrowingTaskGroup(of: Void.self) { group in
+        group.addTask { await client.run() }
+        do {
+            try await TestSchema.shared.ensure(client)
+            _ = try await client.query(
+                #"TRUNCATE "hangar_posts", "hangar_events", "hangar_authors", "hangar_comments", "hangar_profiles", "hangar_kv", "hangar_tagged", "hangar_tags", "hangar_post_tags", "hangar_tagged_posts""#,
+                logger: nil)
+            var repo = Repo(client: client, logger: logger)
+            repo.diagnostics = diagnostics
+            let result = try await body(repo)
             group.cancelAll()
             return result
         } catch {

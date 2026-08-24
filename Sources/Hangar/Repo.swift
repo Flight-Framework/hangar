@@ -31,6 +31,10 @@ public struct Repo: Sendable {
     /// own per-query debug line; `nil` disables both.
     let logger: Logger?
 
+    /// Slow-query and repeated-query reporting. Off unless set — see
+    /// ``QueryDiagnostics``.
+    public var diagnostics = QueryDiagnostics()
+
     /// A repo over one client — every read and write goes to it.
     public init(client: PostgresClient, logger: Logger? = nil) {
         self.backend = .client(primary: client, replica: nil)
@@ -449,6 +453,7 @@ public struct Repo: Sendable {
             dimensions: [("operation", operation)],
             preferredDisplayUnit: .milliseconds
         ).recordNanoseconds(nanoseconds(of: duration))
+        reportDiagnostics(sql: query.sql, operation: operation, duration: duration)
         logger?.debug(
             "hangar query",
             metadata: [
