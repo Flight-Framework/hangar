@@ -25,9 +25,9 @@ let package = Package(
         // policy is satisfied now.
         .package(url: "https://github.com/apple/swift-metrics.git", from: "2.5.0"),
         // Changeset/ValidatedChanges/TableModel — the Flight-independent
-        // validation + dirty-tracking layer (design §11.2). Extracted from
+        // validation + dirty-tracking layer. Extracted from
         // flight-data-core precisely so Hangar could consume it.
-        .package(path: "../../Data/swift-changeset"),
+        .package(url: "https://github.com/Swift-Flight/swift-changeset.git", from: "0.1.0"),
         // swift-syntax bumps its major with each Swift release; the open
         // range is the community convention for macro packages.
         .package(url: "https://github.com/swiftlang/swift-syntax.git", "601.0.0"..<"999.0.0"),
