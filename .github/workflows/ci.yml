@@ -75,10 +75,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # 6.2 rather than the 6.3.3 the Linux jobs use: setup-swift does not
+      # index 6.3 yet. It satisfies this package's tools version, so the job
+      # still answers the question it exists to answer — does the macOS
+      # platform claim compile.
       - name: Set up Swift
         uses: swift-actions/setup-swift@v2
         with:
-          swift-version: "6.3"
+          swift-version: "6.2"
 
       - name: Build (warnings are errors)
         run: swift build -Xswiftc -warnings-as-errors
