@@ -149,6 +149,51 @@ try await repo.transaction(isolation: .serializable, retryingOnSerializationFail
 }
 ```
 
+**`Multi`** for units of work whose steps are decided before they run —
+Ecto's `Ecto.Multi`, and the shape to reach for when a `transaction { }`
+closure would become a tangle of conditionals:
+
+```swift
+enum K {
+    static let user = MultiKey<User>("user")
+    static let profile = MultiKey<Profile>("profile")
+}
+
+var multi = Multi()
+    .insert(K.user, userChangeset)
+    .insert(K.profile) { results in            // reads the row just inserted
+        profileChangeset(for: try results[K.user])
+    }
+if sendWelcome {
+    multi = multi.run(MultiKey<Void>("email")) { results in
+        try await mailer.welcome(try results[K.user])
+    }
+}
+
+switch try await repo.run(multi) {
+case .success(let values):
+    let user = try values[K.user]
+case .failure(let failure):
+    // failure.key names the step, failure.error is what it threw, and
+    // failure.completed holds the results from before it — all rolled back.
+    logger.error("step \(failure.key) failed: \(failure.error)")
+}
+```
+
+Three things make it worth the indirection over a plain transaction:
+
+- **Steps are values.** Build one conditionally, return it from a function,
+  compose two with `merging(_:)`. Nothing runs until `repo.run(multi)`.
+- **Later steps read earlier results** through typed keys — `results[K.user]`
+  is a `User`, not a dictionary lookup you have to cast.
+- **A failed step is a value, not a thrown error.** `MultiResult.failure`
+  names the step that failed and carries what completed before it, so the
+  handler can say which unit of work broke instead of unwrapping an error and
+  guessing. The throw path stays reserved for the transaction machinery
+  itself.
+
+Everything runs in one transaction, so any failure rolls all of it back.
+
 **Row locks and raw statements** where the type system can't reach —
 `lockForUpdate()` is first-class, and `execute` is bind-safe raw SQL on the
 transaction's own connection:
