@@ -263,6 +263,45 @@ let repo = Repo(connection: connection)
 > Hangar cannot detect this itself: PostgresNIO does not expose the
 > connection's transaction status. The caller knows, so the caller says.
 
+## Starting from a database you already have
+
+`HangarIntrospection` reads a live schema and writes `@Entity` types for it,
+so adopting Hangar on an existing database is not a transcription exercise:
+
+```swift
+import HangarIntrospection
+
+let introspector = SchemaIntrospector(client: client)
+for (typeName, source) in try await introspector.generateEntities() {
+    try source.write(to: directory.appending(path: "\(typeName).swift"),
+                     atomically: true, encoding: .utf8)
+}
+```
+
+It reads `pg_catalog` rather than `information_schema` — the standard views
+cannot tell an array's element type, name an enum's labels, or distinguish
+identity from default without extra joins, and there is nothing to gain from
+portability in a Postgres-only tool.
+
+What it decides, and what it refuses to:
+
+- Primary keys become `@ID`, and `@ID(generated: true)` when the database
+  supplies the value.
+- Nullable columns become optionals; `snake_case` becomes `camelCase` with
+  `@Column` carrying the mapping.
+- Postgres enums become Swift enums with their labels in declaration order.
+- A nullable, conventionally-named `deleted_at` becomes `@Deleted`.
+- A type with no faithful Swift counterpart becomes a `TODO` naming it,
+  never a guess — a wrong type here is a runtime decode failure in code
+  nobody wrote by hand and nobody thinks to doubt. `jsonb` compiles as
+  `String` with a comment pointing at `@JSONB`.
+- Foreign keys are **reported as comments**, not turned into associations.
+  The property name, the direction, and whether the other side wants a
+  has-many are decisions the generator cannot make for you.
+
+The output is meant to be read, edited, and committed — a starting point,
+not a build artifact.
+
 ## What is not here
 
 No migrations — use a migration tool. No CTEs (`WITH ... AS`) — the one

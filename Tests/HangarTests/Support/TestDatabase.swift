@@ -1,4 +1,5 @@
 import Foundation
+import HangarIntrospection
 import Logging
 import Hangar
 import PostgresNIO
@@ -153,6 +154,28 @@ private func withRepoUnlocked<T: Sendable>(
     }
 }
 
+/// A `SchemaIntrospector` over the fixture database, under the same lock as
+/// the other integration helpers.
+func withIntrospector<T: Sendable>(
+    _ body: @Sendable (SchemaIntrospector) async throws -> T
+) async throws -> T {
+    try await DatabaseLock.shared.exclusive {
+        let client = PostgresClient(configuration: try TestDatabase.clientConfiguration())
+        return try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask { await client.run() }
+            do {
+                try await TestSchema.shared.ensure(client)
+                let result = try await body(SchemaIntrospector(client: client))
+                group.cancelAll()
+                return result
+            } catch {
+                group.cancelAll()
+                throw error
+            }
+        }
+    }
+}
+
 /// Creates the fixture schema once per process.
 actor TestSchema {
     static let shared = TestSchema()
@@ -174,15 +197,6 @@ actor TestSchema {
             #"DROP TABLE IF EXISTS "hangar_tagged_posts""#,
             #"DROP TYPE IF EXISTS "post_status""#,
             #"CREATE TYPE "post_status" AS ENUM ('draft', 'published', 'archived')"#,
-            #"""
-            CREATE TABLE "hangar_files" (
-                "id" uuid PRIMARY KEY,
-                "name" text NOT NULL,
-                "size_bytes" integer NOT NULL,
-                "owner_id" uuid NOT NULL,
-                "deleted_at" timestamptz
-            )
-            """#,
             #"""
             CREATE TABLE "hangar_posts" (
                 "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -206,6 +220,15 @@ actor TestSchema {
             CREATE TABLE "hangar_authors" (
                 "id" uuid PRIMARY KEY DEFAULT gen_random_uuid(),
                 "name" text NOT NULL
+            )
+            """#,
+            #"""
+            CREATE TABLE "hangar_files" (
+                "id" uuid PRIMARY KEY,
+                "name" text NOT NULL,
+                "size_bytes" integer NOT NULL,
+                "owner_id" uuid NOT NULL REFERENCES "hangar_authors"("id"),
+                "deleted_at" timestamptz
             )
             """#,
             #"""

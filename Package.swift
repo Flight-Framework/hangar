@@ -13,7 +13,11 @@ let package = Package(
         .macOS(.v15)
     ],
     products: [
-        .library(name: "Hangar", targets: ["Hangar"])
+        .library(name: "Hangar", targets: ["Hangar"]),
+        // A separate product: generating models from a live database is a
+        // build-time chore, and nothing depending on Hangar at runtime should
+        // carry it.
+        .library(name: "HangarIntrospection", targets: ["HangarIntrospection"])
     ],
     dependencies: [
         // The design's dependency list (header): PostgresNIO, swift-log,
@@ -33,6 +37,15 @@ let package = Package(
         .package(url: "https://github.com/swiftlang/swift-syntax.git", "601.0.0"..<"999.0.0"),
     ],
     targets: [
+        .target(
+            name: "HangarIntrospection",
+            dependencies: [
+                "Hangar",
+                .product(name: "PostgresNIO", package: "postgres-nio"),
+                .product(name: "Logging", package: "swift-log"),
+            ],
+            swiftSettings: [.swiftLanguageMode(.v6)]
+        ),
         .target(
             name: "Hangar",
             dependencies: [
@@ -61,6 +74,7 @@ let package = Package(
         .testTarget(
             name: "HangarTests",
             dependencies: [
+                "HangarIntrospection",
                 "Hangar",
                 .product(name: "PostgresNIO", package: "postgres-nio"),
             ]
