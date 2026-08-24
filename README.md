@@ -194,6 +194,72 @@ Three things make it worth the indirection over a plain transaction:
 
 Everything runs in one transaction, so any failure rolls all of it back.
 
+**`EXPLAIN`** for the other half of a slow query. The diagnostics below say
+which statement is slow; this says why:
+
+```swift
+let plan = try await repo.explain(
+    Post.where { $0.authorID == id }.order { $0.createdAt.desc() },
+    mode: .analyze)
+```
+
+`.plan` estimates without running; `.analyze` runs and reports what actually
+happened, which is usually the answer — the estimate and the reality
+diverging is the diagnosis. Returned as the text `psql` shows, deliberately
+unparsed: a plan is something a human reads, and a structured form would be
+another thing to keep in step with Postgres across versions.
+
+**Slow-query and N+1 reporting.** Every statement is timed into
+`hangar.query.duration` regardless, but a timer cannot say which query is
+slow. Opt in and it will:
+
+```swift
+var repo = Repo(client: pool, logger: logger)
+repo.diagnostics = .recommended     // 200ms, and 20 repeats in one unit of work
+
+try await repo.detectingRepeatedQueries {
+    try await renderDashboard()     // warns if one statement shape repeats
+}
+```
+
+Both are off by default: a threshold that fires on everything is noise, and
+one that never fires is a setting nobody tuned.
+
+**Pagination** with the count behind it:
+
+```swift
+let page = try await repo.page(
+    Post.where { $0.published }.order { $0.createdAt.desc() },
+    PageRequest(page: 2, perPage: 20))
+
+page.items          // the slice
+page.total          // matching rows, ignoring limit and offset
+page.pageCount      // and so hasNext, isLast, "showing 21–40 of 137"
+```
+
+`PageRequest` clamps on construction, because a page size usually arrives
+from a query string and `?perPage=100000` should be a large page rather than
+a way to ask for the whole table. A query with no `ORDER BY` is paginated by
+primary key — `LIMIT`/`OFFSET` without an order lets Postgres return a row on
+two pages or none.
+
+**Soft deletion**, opt-in per entity:
+
+```swift
+@Entity("files")
+struct StoredFile {
+    @ID let id: UUID
+    @Deleted @Column("deleted_at") var deletedAt: Date?
+}
+```
+
+Reads exclude deleted rows, `repo.delete` stamps the column instead of
+issuing a `DELETE`, and `repo.restore` brings a row back. The exclusion is
+applied to the query rather than to each statement kind, so `select`, `count`,
+`exists`, set-based `update` and `delete`, and preloaded associations all
+inherit it. The escape hatches are named: `withDeleted()`, `onlyDeleted()`,
+`forceDelete()`.
+
 **Row locks and raw statements** where the type system can't reach —
 `lockForUpdate()` is first-class, and `execute` is bind-safe raw SQL on the
 transaction's own connection:
