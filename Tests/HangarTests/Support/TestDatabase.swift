@@ -25,12 +25,22 @@ import Testing
 /// Without the variable, the integration suite is skipped and only the
 /// no-server unit tests run.
 enum TestDatabase {
-    static let url = ProcessInfo.processInfo.environment["HANGAR_TEST_DATABASE_URL"]
+    /// Empty counts as unset. A CI step whose secret did not resolve exports
+    /// the variable with an empty value, and treating that as a URL builds a
+    /// configuration pointing at localhost — which hangs the run instead of
+    /// skipping it, turning a missing secret into a timeout nobody can read.
+    static let url: String? = {
+        let raw = ProcessInfo.processInfo.environment["HANGAR_TEST_DATABASE_URL"]
+        guard let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines),
+            !trimmed.isEmpty
+        else { return nil }
+        return trimmed
+    }()
 
     static var isConfigured: Bool { url != nil }
 
     static func clientConfiguration() throws -> PostgresClient.Configuration {
-        guard let url, let components = URLComponents(string: url) else {
+        guard let url, let components = URLComponents(string: url), components.host != nil else {
             throw TestDatabaseError.notConfigured
         }
         return PostgresClient.Configuration(

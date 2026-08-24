@@ -75,10 +75,10 @@ final class EntityMacroFixtureTests: XCTestCase {
                 static let schema = Hangar.TableSchema(
                     name: "posts",
                     columns: [
-                        Hangar.ColumnDefinition(name: "id", isPrimaryKey: true, isGenerated: false),
-                        Hangar.ColumnDefinition(name: "title", isPrimaryKey: false, isGenerated: false),
-                        Hangar.ColumnDefinition(name: "view_count", isPrimaryKey: false, isGenerated: false),
-                        Hangar.ColumnDefinition(name: "author_id", isPrimaryKey: false, isGenerated: false),
+                        Hangar.ColumnDefinition(name: "id", isPrimaryKey: true, isGenerated: false, isDeletedAt: false),
+                        Hangar.ColumnDefinition(name: "title", isPrimaryKey: false, isGenerated: false, isDeletedAt: false),
+                        Hangar.ColumnDefinition(name: "view_count", isPrimaryKey: false, isGenerated: false, isDeletedAt: false),
+                        Hangar.ColumnDefinition(name: "author_id", isPrimaryKey: false, isGenerated: false, isDeletedAt: false),
                     ]
                 )
 
@@ -195,10 +195,10 @@ final class EntityMacroFixtureTests: XCTestCase {
                 public static let schema = Hangar.TableSchema(
                     name: "users",
                     columns: [
-                        Hangar.ColumnDefinition(name: "id", isPrimaryKey: true, isGenerated: false),
-                        Hangar.ColumnDefinition(name: "email_address", isPrimaryKey: false, isGenerated: false),
-                        Hangar.ColumnDefinition(name: "nickname", isPrimaryKey: false, isGenerated: false),
-                        Hangar.ColumnDefinition(name: "login_count", isPrimaryKey: false, isGenerated: false),
+                        Hangar.ColumnDefinition(name: "id", isPrimaryKey: true, isGenerated: false, isDeletedAt: false),
+                        Hangar.ColumnDefinition(name: "email_address", isPrimaryKey: false, isGenerated: false, isDeletedAt: false),
+                        Hangar.ColumnDefinition(name: "nickname", isPrimaryKey: false, isGenerated: false, isDeletedAt: false),
+                        Hangar.ColumnDefinition(name: "login_count", isPrimaryKey: false, isGenerated: false, isDeletedAt: false),
                     ]
                 )
 
@@ -317,10 +317,10 @@ final class EntityMacroFixtureTests: XCTestCase {
                 static let schema = Hangar.TableSchema(
                     name: "articles",
                     columns: [
-                        Hangar.ColumnDefinition(name: "id", isPrimaryKey: true, isGenerated: false),
-                        Hangar.ColumnDefinition(name: "status", isPrimaryKey: false, isGenerated: false),
-                        Hangar.ColumnDefinition(name: "metadata", isPrimaryKey: false, isGenerated: false),
-                        Hangar.ColumnDefinition(name: "draft", isPrimaryKey: false, isGenerated: false),
+                        Hangar.ColumnDefinition(name: "id", isPrimaryKey: true, isGenerated: false, isDeletedAt: false),
+                        Hangar.ColumnDefinition(name: "status", isPrimaryKey: false, isGenerated: false, isDeletedAt: false),
+                        Hangar.ColumnDefinition(name: "metadata", isPrimaryKey: false, isGenerated: false, isDeletedAt: false),
+                        Hangar.ColumnDefinition(name: "draft", isPrimaryKey: false, isGenerated: false, isDeletedAt: false),
                     ]
                 )
 
@@ -432,9 +432,9 @@ final class EntityMacroFixtureTests: XCTestCase {
                 static let schema = Hangar.TableSchema(
                     name: "post_tags",
                     columns: [
-                        Hangar.ColumnDefinition(name: "post_id", isPrimaryKey: true, isGenerated: false),
-                        Hangar.ColumnDefinition(name: "tag_id", isPrimaryKey: true, isGenerated: false),
-                        Hangar.ColumnDefinition(name: "position", isPrimaryKey: false, isGenerated: false),
+                        Hangar.ColumnDefinition(name: "post_id", isPrimaryKey: true, isGenerated: false, isDeletedAt: false),
+                        Hangar.ColumnDefinition(name: "tag_id", isPrimaryKey: true, isGenerated: false, isDeletedAt: false),
+                        Hangar.ColumnDefinition(name: "position", isPrimaryKey: false, isGenerated: false, isDeletedAt: false),
                     ]
                 )
 
@@ -533,8 +533,8 @@ final class EntityMacroFixtureTests: XCTestCase {
                 static let schema = Hangar.TableSchema(
                     name: "events",
                     columns: [
-                        Hangar.ColumnDefinition(name: "id", isPrimaryKey: true, isGenerated: true),
-                        Hangar.ColumnDefinition(name: "name", isPrimaryKey: false, isGenerated: false),
+                        Hangar.ColumnDefinition(name: "id", isPrimaryKey: true, isGenerated: true, isDeletedAt: false),
+                        Hangar.ColumnDefinition(name: "name", isPrimaryKey: false, isGenerated: false, isDeletedAt: false),
                     ]
                 )
 
@@ -764,9 +764,9 @@ final class EntityAssociationFixtureTests: XCTestCase {
                 static let schema = Hangar.TableSchema(
                     name: "posts",
                     columns: [
-                        Hangar.ColumnDefinition(name: "id", isPrimaryKey: true, isGenerated: false),
-                        Hangar.ColumnDefinition(name: "title", isPrimaryKey: false, isGenerated: false),
-                        Hangar.ColumnDefinition(name: "author_id", isPrimaryKey: false, isGenerated: false),
+                        Hangar.ColumnDefinition(name: "id", isPrimaryKey: true, isGenerated: false, isDeletedAt: false),
+                        Hangar.ColumnDefinition(name: "title", isPrimaryKey: false, isGenerated: false, isDeletedAt: false),
+                        Hangar.ColumnDefinition(name: "author_id", isPrimaryKey: false, isGenerated: false, isDeletedAt: false),
                     ]
                 )
 
@@ -981,7 +981,7 @@ final class ThroughAssociationFixtureTests: XCTestCase {
                 static let schema = Hangar.TableSchema(
                     name: "posts",
                     columns: [
-                        Hangar.ColumnDefinition(name: "id", isPrimaryKey: true, isGenerated: false),
+                        Hangar.ColumnDefinition(name: "id", isPrimaryKey: true, isGenerated: false, isDeletedAt: false),
                     ]
                 )
 
