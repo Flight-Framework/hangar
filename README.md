@@ -318,6 +318,20 @@ HANGAR_BUILD_DOCS=1 swift package generate-documentation --target Hangar
 See [BENCHMARKS.md](BENCHMARKS.md), including the measured cost of unnamed vs
 named prepared statements and where preloading stops scaling.
 
+## Running the tests
+
+```bash
+./scripts/test.sh                 # everything, integration tests included
+./scripts/test.sh --filter Foo    # arguments pass through to swift test
+```
+
+It starts throwaway servers, runs the suite, and removes them. The
+integration suites skip without a database, and a skipped suite is not a
+passing one — what this package proves against real infrastructure is most of
+what it is for.
+
+`FLIGHT_KEEP_SERVERS=1` leaves the containers up between runs.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
