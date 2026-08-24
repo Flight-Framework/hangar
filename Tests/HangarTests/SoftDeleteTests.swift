@@ -13,10 +13,13 @@ import Testing
 struct SoftDeleteTests {
 
     private func seed(_ repo: Repo) async throws -> (live: StoredFile, doomed: StoredFile) {
+        let owner = try await repo.insert(Author(id: UUID(), name: "Owner"))
         let live = try await repo.insert(
-            StoredFile(id: UUID(), name: "keep.txt", sizeBytes: 10, deletedAt: nil))
+            StoredFile(
+                id: UUID(), name: "keep.txt", sizeBytes: 10, ownerID: owner.id, deletedAt: nil))
         let doomed = try await repo.insert(
-            StoredFile(id: UUID(), name: "bin.txt", sizeBytes: 20, deletedAt: nil))
+            StoredFile(
+                id: UUID(), name: "bin.txt", sizeBytes: 20, ownerID: owner.id, deletedAt: nil))
         return (live, doomed)
     }
 
@@ -136,6 +139,37 @@ struct SoftDeleteTests {
             // delete still works — it hard-deletes, which is what the model means.
             try await repo.delete(author)
             #expect(try await repo.count(Author.all) == 0)
+        }
+    }
+
+    @Test("preloading does not resurrect deleted children")
+    func preloadExcludesDeleted() async throws {
+        try await withRepo { repo in
+            let (_, doomed) = try await seed(repo)
+            try await repo.delete(doomed)
+
+            // The association is loaded by a separate query from the parent's,
+            // so this is the path most likely to forget the exclusion — and
+            // the one where forgetting is least visible, since the parent list
+            // looks right and only the nested array is wrong.
+            let owners = try await repo.all(Author.all.preload(\.files))
+            let files = try owners[0].files.get()
+            #expect(files.count == 1)
+            #expect(files.first?.name == "keep.txt")
+        }
+    }
+
+    @Test("a preload can opt in to deleted children")
+    func preloadCanIncludeDeleted() async throws {
+        try await withRepo { repo in
+            let (_, doomed) = try await seed(repo)
+            try await repo.delete(doomed)
+
+            // The nested tune is an ordinary query builder, so the same
+            // opt-in works there.
+            let owners = try await repo.all(
+                Author.all.preload(\.files) { $0.withDeleted() })
+            #expect(try owners[0].files.get().count == 2)
         }
     }
 

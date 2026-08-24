@@ -54,6 +54,11 @@ struct Author: Sendable, Equatable {
     @HasOne(foreignKey: \Profile.authorID)
     var profile: Loadable<Profile?>
 
+    /// A soft-deletable child, so preloading can be checked for resurrecting
+    /// rows the parent's own query would have excluded.
+    @HasMany(foreignKey: \StoredFile.ownerID)
+    var files: Loadable<[StoredFile]>
+
     @HasMany(foreignKey: \Post.authorID)
     var posts: Loadable<[Post]>
 
@@ -160,5 +165,6 @@ struct StoredFile: Sendable, Equatable {
     @ID let id: UUID
     var name: String
     var sizeBytes: Int
+    @Column("owner_id") var ownerID: UUID
     @Deleted @Column("deleted_at") var deletedAt: Date?
 }

@@ -179,6 +179,7 @@ actor TestSchema {
                 "id" uuid PRIMARY KEY,
                 "name" text NOT NULL,
                 "size_bytes" integer NOT NULL,
+                "owner_id" uuid NOT NULL,
                 "deleted_at" timestamptz
             )
             """#,
