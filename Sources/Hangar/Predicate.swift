@@ -103,6 +103,41 @@ public func >= <V: ColumnCodable & Comparable>(lhs: Column<V>, rhs: V) -> Predic
     Predicate(expression: .infix(">=", lhs.expression, .bind(SQLBind(rhs))))
 }
 
+/// Ordering comparisons against an optional column, where the value being
+/// compared is not itself optional.
+///
+/// "Deleted before this date", "closed after that one" — the columns holding
+/// those answers are nullable because the thing may not have happened yet,
+/// and ranging over them is ordinary work. Without these overloads it does
+/// not compile, and the error the type checker produces for the near miss is
+/// "failed to produce diagnostic for expression", which tells the caller
+/// nothing at all.
+///
+/// The right-hand side is deliberately non-optional: `deletedAt < nil` has no
+/// meaning in SQL, where NULL comparisons are never true. Rows whose column
+/// is NULL simply do not match — which is what "deleted before the cutoff"
+/// should mean for a row that was never deleted.
+
+/// `column < value` for a nullable column. NULL rows never match.
+public func < <V: ColumnCodable & Comparable>(lhs: Column<V?>, rhs: V) -> Predicate {
+    Predicate(expression: .infix("<", lhs.expression, .bind(SQLBind(rhs))))
+}
+
+/// `column > value` for a nullable column. NULL rows never match.
+public func > <V: ColumnCodable & Comparable>(lhs: Column<V?>, rhs: V) -> Predicate {
+    Predicate(expression: .infix(">", lhs.expression, .bind(SQLBind(rhs))))
+}
+
+/// `column <= value` for a nullable column. NULL rows never match.
+public func <= <V: ColumnCodable & Comparable>(lhs: Column<V?>, rhs: V) -> Predicate {
+    Predicate(expression: .infix("<=", lhs.expression, .bind(SQLBind(rhs))))
+}
+
+/// `column >= value` for a nullable column. NULL rows never match.
+public func >= <V: ColumnCodable & Comparable>(lhs: Column<V?>, rhs: V) -> Predicate {
+    Predicate(expression: .infix(">=", lhs.expression, .bind(SQLBind(rhs))))
+}
+
 // MARK: - Boolean combinators (the spike surface)
 
 /// Both predicates — renders `(lhs AND rhs)`, fully parenthesized.

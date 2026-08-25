@@ -105,3 +105,56 @@ extension PostgresIntegrationSuite {
         }
     }
 }
+
+/// Ordering comparisons against a nullable column.
+///
+/// The gap these close showed up building a retention job: "purge everything
+/// soft-deleted more than thirty days ago" is `deletedAt < cutoff`, the most
+/// ordinary query a `@Deleted` column has, and it did not compile. Worse, the
+/// near miss made the type checker give up entirely — "failed to produce
+/// diagnostic for expression" — so the error named nothing to fix.
+@Suite("Ordering comparisons on nullable columns")
+struct NullableOrderingTests {
+
+    static let cutoff = Date(timeIntervalSince1970: 1_700_000_000)
+
+    @Test("a nullable timestamp ranges like any other column")
+    func lessThan() throws {
+        let statement = try SQLRenderer.select(
+            StoredFile.all.withDeleted().where { $0.deletedAt < Self.cutoff })
+
+        #expect(statement.sql.contains(#""deleted_at" < $1"#))
+        // The bind is the date itself — no NULL literal anywhere, which is
+        // what keeps this a range test rather than an always-false one.
+        #expect(statement.binds.count == 1)
+    }
+
+    @Test("all four orderings render")
+    func everyOperator() throws {
+        let cases: [(Hangar.Predicate, String)] = [
+            (StoredFile.queryColumns.deletedAt < Self.cutoff, "<"),
+            (StoredFile.queryColumns.deletedAt > Self.cutoff, ">"),
+            (StoredFile.queryColumns.deletedAt <= Self.cutoff, "<="),
+            (StoredFile.queryColumns.deletedAt >= Self.cutoff, ">="),
+        ]
+        for (predicate, symbol) in cases {
+            let statement = try SQLRenderer.select(
+                StoredFile.all.withDeleted().where { _ in predicate })
+            #expect(statement.sql.contains(#""deleted_at" \#(symbol) $1"#))
+        }
+    }
+
+    @Test("comparing against nil is still IS NULL, not a range")
+    func nilIsUnaffected() throws {
+        // The ordering overloads take a non-optional right-hand side on
+        // purpose, so adding them cannot have changed what `== nil` means.
+        let live = try SQLRenderer.select(
+            StoredFile.all.withDeleted().where { $0.deletedAt == nil })
+        #expect(live.sql.contains(#""deleted_at" IS NULL"#))
+        #expect(live.binds.isEmpty)
+
+        let gone = try SQLRenderer.select(
+            StoredFile.all.withDeleted().where { $0.deletedAt != nil })
+        #expect(gone.sql.contains(#""deleted_at" IS NOT NULL"#))
+    }
+}
