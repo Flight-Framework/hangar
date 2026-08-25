@@ -4,7 +4,75 @@ All notable changes are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.0] - 2026-08-25
+
+### Added
+
+- **Soft delete.** `@Deleted var deletedAt: Date?` makes an entity
+  soft-deletable: `repo.delete` stamps the column instead of removing the
+  row, `repo.restore` clears it, and every read path excludes stamped rows by
+  default. `withDeleted()` and `onlyDeleted()` select the other two views.
+  The default applies uniformly — `all`, `one`, `count`, `exists`, joins,
+  projections and preloads — because a soft delete that one code path forgets
+  is worse than none: the row looks gone in a list and reappears in a count,
+  and nothing errors. Preloaded children are excluded too, which is the case
+  most implementations miss.
+- **Common table expressions.** `with(_:as:)` and `withRecursive` define
+  them; `reading(from:)` makes one the query's source, rendered as
+  `FROM "cte" AS "entity_table"` so every column reference, ordering,
+  predicate and preload downstream resolves against it unchanged. A
+  non-recursive body may be a typed `Query`; a recursive one takes a typed
+  anchor and a raw step, because the step refers to the CTE being defined and
+  no entity's columns can describe that. `count`, `exists`, `delete` and
+  `update` all carry the clause. A bulk write may be *fed* by a CTE but is
+  refused if it tries to target one — `DELETE FROM "cte"` deletes nothing
+  real.
+- **Pagination.** `repo.page(query, PageRequest(...))` returns a `Page`
+  carrying the slice and the total behind it. The count and the slice run
+  sequentially rather than concurrently: two queries from one pool under a
+  request-scoped connection is how a pool deadlocks under load.
+- **Query diagnostics.** `QueryDiagnostics` surfaces slow queries against a
+  configurable threshold, and `detectingRepeatedQueries` reports the N+1
+  shape — the same statement issued repeatedly within one scope — which is
+  the problem preloading exists to solve and the one nothing was measuring.
+- **`EXPLAIN`.** `repo.explain(query, mode:)` returns the plan as text, or
+  `ANALYZE`/`BUFFERS`/`VERBOSE` output. The diagnostics above say which query
+  is slow; this says why.
+- **Schema introspection** (`HangarIntrospection`, a separate product).
+  `SchemaIntrospector` reads `pg_catalog` and `EntityGenerator` emits
+  `@Entity` types from a live database — the path into Hangar for a schema
+  that already exists. A separate product on purpose: generating models is a
+  build-time chore, and nothing depending on Hangar at runtime should carry
+  it.
+
+### Fixed
+
+- **Projections silently dropped the soft-delete scope.** `Query.rebinding` —
+  the pivot `.select {}` goes through — copied every clause except
+  `deletedRows`, so `.withDeleted().select {}` quietly went back to hiding
+  deleted rows and `.onlyDeleted()` inverted to mean its opposite. A
+  projection answering a different question than the query it came from is
+  the class of bug this package refuses to ship; pinned by its own test.
+
+### Changed
+
+- `SQLFragment` rendering, the fragment-predicate path and the
+  transaction escape hatch's statement rendering now share one
+  implementation instead of three copies of the same parts loop.
+
+### Infrastructure
+
+- `scripts/test.sh` starts a throwaway Postgres, runs the whole suite through
+  `CI/run-tests.sh`, and tears it down.
+- `CI/run-tests.sh` reports both testing dialects. `swift test` exits non-zero
+  for either, but its *output* does not say so in one place — which is how 13
+  failing macro fixtures hid behind a green swift-testing summary.
+- The database tests serialize against a shared lock; `withRepo` truncates
+  shared fixture tables, so parallel suites were racing each other.
+- A macOS build job, and the private-package token is now optional — every
+  dependency is public, so a fork with no secret resolves fine.
+
+## [0.1.0] - 2026-08-24
 
 ### Added
 
