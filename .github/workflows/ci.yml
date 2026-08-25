@@ -87,14 +87,13 @@ jobs:
       - name: Build (warnings are errors)
         run: swift build -Xswiftc -warnings-as-errors
 
-      # macOS runners have no Docker and GitHub service containers are
-      # Linux-only, so the integration suites cannot run here — this job
-      # exists to prove the `platforms: [.macOS(.v15)]` claim in
-      # Package.swift actually compiles and that the unit suites pass.
-      # Linux is where the integration coverage lives, gated so it cannot
-      # skip silently.
-      - name: Test (unit suites — no database on a macOS runner)
-        run: ./CI/run-tests.sh
+      # Build only. macOS runners have no Docker and GitHub service
+      # containers are Linux-only, and this package's integration suites
+      # *fail* rather than skip without a database — deliberately, since a
+      # skipped suite is not a passing one. So there is no honest way to run
+      # `swift test` here. This job exists to prove the
+      # `platforms: [.macOS(.v15)]` claim in Package.swift compiles; Linux
+      # is where the test coverage lives.
 
   docs:
     name: Build documentation
