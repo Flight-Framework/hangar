@@ -118,23 +118,30 @@ public struct SchemaIntrospector: Sendable {
             SELECT c.relname AS table_name,
                    a.attname AS column_name,
                    rc.relname AS referenced_table,
-                   ra.attname AS referenced_column
+                   ra.attname AS referenced_column,
+                   coalesce(array_length(con.conkey, 1), 1) AS column_count,
+                   con.conname AS constraint_name
             FROM pg_constraint con
             JOIN pg_class c ON c.oid = con.conrelid
             JOIN pg_namespace n ON n.oid = c.relnamespace
             JOIN pg_class rc ON rc.oid = con.confrelid
+            -- The FIRST column pair only. A composite foreign key spans
+            -- several, and reading just this pair would describe a
+            -- two-column key as a one-column one; `column_count` is
+            -- carried so the generator can refuse rather than guess.
             JOIN pg_attribute a ON a.attrelid = con.conrelid AND a.attnum = con.conkey[1]
             JOIN pg_attribute ra ON ra.attrelid = con.confrelid AND ra.attnum = con.confkey[1]
             WHERE con.contype = 'f' AND n.nspname = \(schema)
             ORDER BY c.relname, a.attname
             """, logger: logger ?? Self.quiet)
-        for try await (table, column, referenced, referencedColumn) in rows.decode(
-            (String, String, String, String).self)
+        for try await (table, column, referenced, referencedColumn, columnCount, name) in
+            rows.decode((String, String, String, String, Int, String).self)
         {
             result[table, default: []].append(
                 IntrospectedForeignKey(
                     column: column, referencedTable: referenced,
-                    referencedColumn: referencedColumn))
+                    referencedColumn: referencedColumn, columnCount: columnCount,
+                    constraintName: name))
         }
         return result
     }

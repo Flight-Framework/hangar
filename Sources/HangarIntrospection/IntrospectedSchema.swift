@@ -39,11 +39,29 @@ public struct IntrospectedForeignKey: Sendable, Equatable {
     public let column: String
     public let referencedTable: String
     public let referencedColumn: String
+    /// How many columns the constraint spans. Anything above 1 is a
+    /// composite key, of which only the first column pair is reported —
+    /// see ``isComposite``.
+    public let columnCount: Int
+    /// The constraint's own name, so a composite key can be named in the
+    /// generated comment rather than merely alluded to.
+    public let constraintName: String?
 
-    public init(column: String, referencedTable: String, referencedColumn: String) {
+    /// Whether this constraint spans more than one column pair. The
+    /// introspector reads the first pair only, so describing a composite
+    /// key as if it were `column -> table.column` would be a confident
+    /// wrong answer — the generator says so instead.
+    public var isComposite: Bool { columnCount > 1 }
+
+    public init(
+        column: String, referencedTable: String, referencedColumn: String,
+        columnCount: Int = 1, constraintName: String? = nil
+    ) {
         self.column = column
         self.referencedTable = referencedTable
         self.referencedColumn = referencedColumn
+        self.columnCount = columnCount
+        self.constraintName = constraintName
     }
 }
 

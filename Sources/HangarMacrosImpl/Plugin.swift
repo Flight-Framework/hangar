@@ -30,10 +30,21 @@ struct HangarMacroDiagnostic: DiagnosticMessage {
     static func error(_ id: String, _ message: String) -> HangarMacroDiagnostic {
         HangarMacroDiagnostic(message: message, id: id, severity: .error)
     }
+
+    /// For a convention the macro applies rather than a mistake it refuses:
+    /// the expansion is still correct, but it made a choice the author
+    /// should see rather than discover.
+    static func warning(_ id: String, _ message: String) -> HangarMacroDiagnostic {
+        HangarMacroDiagnostic(message: message, id: id, severity: .warning)
+    }
 }
 
 extension MacroExpansionContext {
     func diagnoseError(_ id: String, _ message: String, at node: some SyntaxProtocol) {
         diagnose(Diagnostic(node: Syntax(node), message: HangarMacroDiagnostic.error(id, message)))
+    }
+
+    func diagnoseWarning(_ id: String, _ message: String, at node: some SyntaxProtocol) {
+        diagnose(Diagnostic(node: Syntax(node), message: HangarMacroDiagnostic.warning(id, message)))
     }
 }

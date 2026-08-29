@@ -75,6 +75,7 @@ public struct EntityMacro: MemberMacro, ExtensionMacro {
             changesetBindSwitch(properties, access: access),
         ]
         if !associations.isEmpty {
+            diagnoseCompositeKeyAssociations(associations, properties: properties, at: node, in: context)
             declarations.append(
                 associationRegistry(
                     associations, properties: properties, typeName: typeName, access: access))
@@ -230,6 +231,36 @@ public struct EntityMacro: MemberMacro, ExtensionMacro {
             \(raw: lines.joined(separator: "\n"))
             }
             """
+    }
+
+    /// A composite-key entity's has-many/has-one preloads batch on the
+    /// **first** `@ID` alone — the `= ANY($1)` membership test the batched
+    /// preload is built on takes one key column, and there is no obvious
+    /// right answer for which half of a two-column key a child references.
+    ///
+    /// Taking the first is a defensible convention; taking it silently is
+    /// not. This says so at build time, so it is a decision the author made
+    /// rather than a surprise they debug later. `@BelongsTo` is unaffected:
+    /// it names its own `foreignKey`/`references` pair.
+    private static func diagnoseCompositeKeyAssociations(
+        _ associations: [EntityAssociation],
+        properties: [EntityProperty],
+        at node: AttributeSyntax,
+        in context: some MacroExpansionContext
+    ) {
+        let keys = properties.filter(\.isPrimaryKey)
+        guard keys.count > 1 else { return }
+        let parentKeyed = associations.filter { $0.kind != .belongsTo }
+        guard !parentKeyed.isEmpty else { return }
+        let names = parentKeyed.map(\.identifier).joined(separator: ", ")
+        context.diagnoseWarning(
+            "entity.compositekey.association",
+            """
+            this entity has a composite key (\(keys.map(\.identifier).joined(separator: ", "))), \
+            so \(names) will batch on '\(keys[0].identifier)' alone. If the child references the \
+            other key column, preload it through an explicit query instead.
+            """,
+            at: node)
     }
 
     /// The association registry: keypath → loader, with

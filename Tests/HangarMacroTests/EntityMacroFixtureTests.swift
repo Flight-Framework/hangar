@@ -407,7 +407,7 @@ final class EntityMacroFixtureTests: XCTestCase {
                 var position: Int
             }
             """,
-            expandedSource: """
+                        expandedSource: """
             struct PostTag: Sendable {
                 let postID: UUID
                 let tagID: UUID
@@ -1401,5 +1401,115 @@ final class EntityDiagnosticFixtureTests: XCTestCase {
                     line: 2, column: 5)
             ],
             macroSpecs: testMacros)
+    }
+}
+
+final class CompositeKeyAssociationFixtureTests: XCTestCase {
+    /// A composite-key entity's has-many batches on the first `@ID`. That
+    /// is a convention, not a deduction, so the macro says so at build
+    /// time rather than letting it be discovered as wrong rows.
+    func testCompositeKeyHasManyWarns() {
+        assertMacroExpansion(
+            """
+            @Entity("post_tags")
+            struct PostTag: Sendable {
+                @ID let postID: UUID
+                @ID let tagID: UUID
+                @HasMany(foreignKey: \\Note.postID)
+                var notes: Loadable<[Note]>
+            }
+            """,
+            expandedSource: """
+            struct PostTag: Sendable {
+                let postID: UUID
+                let tagID: UUID
+                var notes: Loadable<[Note]>
+
+                struct Columns: Hangar.AliasableColumns {
+                    let postID: Hangar.Column<UUID>
+                    let tagID: Hangar.Column<UUID>
+                    init() {
+                        self.init(table: "post_tags")
+                    }
+                    init(table: String) {
+                        self.postID = Hangar.Column<UUID>("post_id", table: table)
+                        self.tagID = Hangar.Column<UUID>("tag_id", table: table)
+                    }
+                }
+
+                static let queryColumns = Columns()
+
+                static let schema = Hangar.TableSchema(
+                    name: "post_tags",
+                    columns: [
+                        Hangar.ColumnDefinition(name: "post_id", isPrimaryKey: true, isGenerated: false, isDeletedAt: false),
+                        Hangar.ColumnDefinition(name: "tag_id", isPrimaryKey: true, isGenerated: false, isDeletedAt: false),
+                    ]
+                )
+
+                static let tableName = "post_tags"
+
+                static let columns: [Changesets.TableColumn<PostTag>] = [
+                    Changesets.TableColumn("post_id", \\PostTag.postID, primaryKey: true),
+                    Changesets.TableColumn("tag_id", \\PostTag.tagID, primaryKey: true),
+                ]
+
+                init(postID: UUID, tagID: UUID, notes: Loadable<[Note]> = .notLoaded(association: "notes")) {
+                    self.postID = postID
+                    self.tagID = tagID
+                    self.notes = notes
+                }
+
+                init(from row: PostgresRow) throws {
+                    let cells = row.makeRandomAccess()
+                    try Hangar._checkColumnCount(cells.count, expected: 2, table: "post_tags")
+                    self.postID = try Hangar._decodeColumn(UUID.self, from: cells[0], table: "post_tags", column: "post_id")
+                    self.tagID = try Hangar._decodeColumn(UUID.self, from: cells[1], table: "post_tags", column: "tag_id")
+                    self.notes = .notLoaded(association: "notes")
+                }
+
+                func _bind(for column: String) -> Hangar.SQLBind? {
+                    switch column {
+                    case "post_id":
+                        return Hangar.SQLBind(self.postID)
+                    case "tag_id":
+                        return Hangar.SQLBind(self.tagID)
+                    default:
+                        return nil
+                    }
+                }
+
+                static func _changesetBind(column: String, value: any Sendable) -> Hangar.SQLBind? {
+                    switch column {
+                    case "post_id":
+                        return (value as? UUID).map {
+                            Hangar.SQLBind($0)
+                        }
+                    case "tag_id":
+                        return (value as? UUID).map {
+                            Hangar.SQLBind($0)
+                        }
+                    default:
+                        return nil
+                    }
+                }
+
+                static func _association(for keyPath: AnyKeyPath) -> (any Sendable)? {
+                    if keyPath == \\PostTag.notes {
+                        return Hangar._hasMany(name: "notes", parentKey: \\PostTag.postID, foreignKey: \\Note.postID, target: \\PostTag.notes)
+                    }
+                    return nil
+                }
+            }
+
+            extension PostTag: Hangar.Table, Changesets.TableModel {
+            }
+            """,
+            diagnostics: [
+                DiagnosticSpec(
+                    message: "this entity has a composite key (postID, tagID), so notes will batch on 'postID' alone. If the child references the other key column, preload it through an explicit query instead.",
+                    line: 1, column: 1, severity: .warning)
+            ],
+            macroSpecs: associationTestMacros)
     }
 }

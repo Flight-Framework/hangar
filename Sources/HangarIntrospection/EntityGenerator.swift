@@ -68,6 +68,19 @@ public struct EntityGenerator: Sendable {
             lines.append("    // generated: the property name, the direction, and whether the")
             lines.append("    // other side wants a has-many are decisions only you can make.")
             for key in table.foreignKeys {
+                // A composite key is read as its first column pair only, so
+                // describing it as `a -> t.b` would name a constraint that
+                // does not exist. Naming the gap is the honest output — the
+                // same rule the unmappable-type TODO follows.
+                guard !key.isComposite else {
+                    let name = key.constraintName.map { " (\($0))" } ?? ""
+                    lines.append(
+                        "    // TODO: \(key.column) -> \(key.referencedTable).\(key.referencedColumn)"
+                            + " is one pair of a \(key.columnCount)-column foreign key\(name).")
+                    lines.append(
+                        "    // Hangar reads the first pair only; write the association by hand.")
+                    continue
+                }
                 let related = TypeMapping.typeName(forTable: key.referencedTable)
                 lines.append(
                     "    //   \(key.column) -> \(key.referencedTable).\(key.referencedColumn)"

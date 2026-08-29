@@ -190,6 +190,28 @@ struct EntityGeneratorTests {
         #expect(associationLines.allSatisfy { $0.trimmingCharacters(in: .whitespaces).hasPrefix("//") })
     }
 
+    @Test("a composite foreign key is refused, not described as a one-column one")
+    func compositeForeignKey() {
+        let source = EntityGenerator().generate(
+            IntrospectedTable(
+                name: "line_items",
+                columns: [
+                    column("id", "uuid", pk: true), column("order_id", "uuid"),
+                    column("tenant_id", "uuid"),
+                ],
+                foreignKeys: [
+                    IntrospectedForeignKey(
+                        column: "order_id", referencedTable: "orders", referencedColumn: "id",
+                        columnCount: 2, constraintName: "line_items_order_fkey")
+                ]))
+        // The catalogue read only ever sees the first column pair, so a
+        // `@BelongsTo` suggestion here would name a key that isn't there.
+        #expect(source.contains("TODO"))
+        #expect(source.contains("2-column foreign key"))
+        #expect(source.contains("line_items_order_fkey"))
+        #expect(!source.contains("@BelongsTo"))
+    }
+
     @Test("public models are opt-in")
     func accessLevel() {
         let table = IntrospectedTable(name: "posts", columns: [column("id", "uuid", pk: true)])
