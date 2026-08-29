@@ -34,6 +34,21 @@ but does mean three associations are three round trips.
 > thousand. If you are preloading over very large result sets, page the
 > parents.
 
+## Soft-deleted children
+
+A preloaded association excludes the child's soft-deleted rows by default,
+with no special case for preloading: every preload path runs `repo.all` on
+an ordinary `Query<Child, Child>`, whose default scope already excludes
+deleted rows, so the exclusion arrives for free rather than needing its own
+logic to stay correct.
+
+The tune closure is an ordinary query builder, so it opts back in the same
+way any other scope change would:
+
+```swift
+Post.all.preload(\.files) { $0.withDeleted() }
+```
+
 ## Accessing what you loaded
 
 ``Loadable`` is a small enum: loaded, or not.

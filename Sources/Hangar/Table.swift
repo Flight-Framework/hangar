@@ -162,6 +162,6 @@ public struct ColumnDefinition: Sendable, Equatable {
     /// Equality over every recorded property.
     public static func == (lhs: ColumnDefinition, rhs: ColumnDefinition) -> Bool {
         lhs.name == rhs.name && lhs.isPrimaryKey == rhs.isPrimaryKey
-            && lhs.isGenerated == rhs.isGenerated
+            && lhs.isGenerated == rhs.isGenerated && lhs.isDeletedAt == rhs.isDeletedAt
     }
 }

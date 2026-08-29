@@ -63,6 +63,7 @@ just the problem, because someone is usually reading it during an incident.
 - ``Aliased``
 - ``CommonTableExpression``
 - ``Predicate``
+- ``DeletedRowScope``
 - ``DynamicFilterValue``
 
 ### Running them
@@ -71,6 +72,10 @@ just the problem, because someone is usually reading it during an incident.
 - ``IsolationLevel``
 - ``Multi``
 - ``PostgresRowStream``
+- ``Page``
+- ``PageRequest``
+- ``ExplainMode``
+- ``QueryDiagnostics``
 
 ### Errors
 

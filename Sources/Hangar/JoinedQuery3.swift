@@ -35,6 +35,9 @@ public struct JoinedQuery3<A: Table, B: Table, C: Table, Result: Sendable>: Send
     var isDistinct = false
     var distinctOn: [SQLExpression] = []
     var rowLock: RowLock? = nil
+    /// Which base rows this query sees when `A` is soft-deletable; `B` and
+    /// `C` follow ``DeletedRowScope/forJoinedSource``.
+    var deletedRows: DeletedRowScope = .excluded
     /// Preloads apply when `Result == A` (the base-entity path).
     var preloads: [PreloadStep<A>] = []
     var selection: Selection<Result>? = nil
@@ -57,6 +60,9 @@ public struct JoinedQuery3<A: Table, B: Table, C: Table, Result: Sendable>: Send
         next.isDistinct = isDistinct
         next.distinctOn = distinctOn
         next.rowLock = rowLock
+        // Carried for the same reason `Query.rebinding` carries it: a
+        // projection over `withDeleted()` must keep seeing deleted rows.
+        next.deletedRows = deletedRows
         next.selection = selection
         return next
     }
@@ -128,8 +134,57 @@ extension JoinedQuery {
         next.isDistinct = isDistinct
         next.distinctOn = distinctOn
         next.rowLock = rowLock
+        next.deletedRows = deletedRows
         next.preloads = preloads
         return next
+    }
+}
+
+// MARK: - Soft-delete scope
+
+extension JoinedQuery3 {
+    /// Include soft-deleted rows — of the base entity and of both joined
+    /// tables alike.
+    public func withDeleted() -> JoinedQuery3<A, B, C, Result> {
+        var next = self
+        next.deletedRows = .included
+        return next
+    }
+
+    /// Restrict the *base* entity to its soft-deleted rows; the joined
+    /// tables still exclude their own.
+    public func onlyDeleted() -> JoinedQuery3<A, B, C, Result> {
+        var next = self
+        next.deletedRows = .only
+        return next
+    }
+
+    /// The caller's predicate plus the base source's soft-delete condition.
+    var effectivePredicate: Predicate? {
+        andedPredicate(
+            predicate,
+            deletedRows.condition(
+                for: A.schema.deletedAt, qualifiedBy: baseAlias ?? A.schema.name))
+    }
+
+    /// `on1` plus `B`'s soft-delete condition — in ON, not WHERE, so a
+    /// LEFT JOIN keeps its unmatched rows.
+    var effectiveOn1: Predicate {
+        Self.scoped(on1, B.schema.deletedAt, joinedAlias ?? B.schema.name, deletedRows)
+    }
+
+    /// `on2` plus `C`'s soft-delete condition.
+    var effectiveOn2: Predicate {
+        Self.scoped(on2, C.schema.deletedAt, thirdAlias ?? C.schema.name, deletedRows)
+    }
+
+    private static func scoped(
+        _ predicate: Predicate, _ column: ColumnDefinition?, _ qualifier: String,
+        _ scope: DeletedRowScope
+    ) -> Predicate {
+        guard let condition = scope.forJoinedSource.condition(for: column, qualifiedBy: qualifier)
+        else { return predicate }
+        return Predicate(expression: .infix("AND", predicate.expression, condition))
     }
 }
 
@@ -300,10 +355,10 @@ extension SQLRenderer {
         if let alias = query.baseAlias { sql += " AS \(quote(alias))" }
         sql += " \(query.kind1.rawValue) \(B.schema.quotedName)"
         if let alias = query.joinedAlias { sql += " AS \(quote(alias))" }
-        sql += " ON \(render(query.on1.expression, writer: &writer))"
+        sql += " ON \(render(query.effectiveOn1.expression, writer: &writer))"
         sql += " \(query.kind2.rawValue) \(C.schema.quotedName)"
         if let alias = query.thirdAlias { sql += " AS \(quote(alias))" }
-        sql += " ON \(render(query.on2.expression, writer: &writer))"
+        sql += " ON \(render(query.effectiveOn2.expression, writer: &writer))"
         return sql
     }
 
@@ -335,7 +390,7 @@ extension SQLRenderer {
         }
         var sql = "SELECT \(distinctClause(query.isDistinct, query.distinctOn, writer: &writer))\(list)"
         sql += " \(from)"
-        appendWhere(query.predicate, to: &sql, writer: &writer)
+        appendWhere(query.effectivePredicate, to: &sql, writer: &writer)
         if !query.grouping.isEmpty {
             let terms = query.grouping.map { render($0, writer: &writer) }.joined(separator: ", ")
             sql += " GROUP BY \(terms)"
@@ -367,7 +422,7 @@ extension SQLRenderer {
                 binds: writer.binds)
         }
         var sql = "SELECT count(*) \(try joinFromClause(query, writer: &writer))"
-        appendWhere(query.predicate, to: &sql, writer: &writer)
+        appendWhere(query.effectivePredicate, to: &sql, writer: &writer)
         return RenderedStatement(sql: sql, binds: writer.binds)
     }
 
@@ -381,7 +436,7 @@ extension SQLRenderer {
             return RenderedStatement(sql: "SELECT EXISTS (\(inner))", binds: writer.binds)
         }
         var inner = "SELECT 1 \(try joinFromClause(query, writer: &writer))"
-        appendWhere(query.predicate, to: &inner, writer: &writer)
+        appendWhere(query.effectivePredicate, to: &inner, writer: &writer)
         return RenderedStatement(sql: "SELECT EXISTS (\(inner))", binds: writer.binds)
     }
 

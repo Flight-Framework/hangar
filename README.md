@@ -99,7 +99,6 @@ Post.join(Comment.self, on: { p, c in c.postID == p.id })
     .join(Author.self, on: { _, comment, author in comment.authorID == author.id })
     .select(into: Row.self) { p, c, a in (title: p.title, commenter: a.name) }
 ```
-
 **`DISTINCT ON`** for one-row-per-group reads, with the same last-call-wins
 relationship to `.distinct()` that repeated `.limit` calls have:
 
@@ -258,7 +257,41 @@ issuing a `DELETE`, and `repo.restore` brings a row back. The exclusion is
 applied to the query rather than to each statement kind, so `select`, `count`,
 `exists`, set-based `update` and `delete`, and preloaded associations all
 inherit it. The escape hatches are named: `withDeleted()`, `onlyDeleted()`,
-`forceDelete()`.
+`forceDelete()` — spelled either on a query (`StoredFile.all.onlyDeleted()`)
+or straight on the entity (`StoredFile.onlyDeleted()`).
+
+**Joins carry the scope too**, in all three forms — two-table, three-table,
+and `Table.query { }`. The rule is one sentence: the base entity is scoped
+in `WHERE`, every soft-deletable *joined* table excludes its own deleted
+rows in its `ON` clause, and `withDeleted()` lifts both.
+
+```swift
+// The trash view, joined to live owners — not to deleted ones:
+StoredFile.onlyDeleted().join(Author.self, on: { file, owner in owner.id == file.ownerID })
+
+// Every author, including one whose only file is deleted: the child's
+// scope is in ON, so the outer join stays outer.
+Author.leftJoin(StoredFile.self, on: { owner, file in file.ownerID == owner.id })
+```
+
+`ON` rather than `WHERE` for the joined side is the whole reason a `LEFT
+JOIN` keeps its unmatched rows; for an inner join the two are equivalent,
+so one rule covers both. `.only` scopes the base alone — a trash view of
+files still joins to live owners — while `withDeleted()` says "stop
+filtering on deletion in this query" and so lifts it everywhere.
+
+A nullable column supports the same ordering comparisons a non-nullable one
+does — `<`, `>`, `<=`, `>=` — which is what makes "purge everything past its
+retention window" an ordinary query against `@Deleted`'s own column, or any
+other nullable timestamp:
+
+```swift
+try await repo.delete(StoredFile.onlyDeleted().where { $0.deletedAt < cutoff })
+```
+
+The right-hand side is never optional: `deletedAt < nil` has no SQL meaning,
+and keeping `nil` out of these overloads is what keeps `== nil` rendering
+`IS NULL` rather than being captured by one of them.
 
 **Row locks and raw statements** where the type system can't reach —
 `lockForUpdate()` is first-class, and `execute` is bind-safe raw SQL on the

@@ -38,6 +38,10 @@ public struct JoinedQuery<A: Table, B: Table, Result: Sendable>: Sendable {
     var isDistinct = false
     var distinctOn: [SQLExpression] = []
     var rowLock: RowLock? = nil
+    /// Which base rows this query sees when `A` is soft-deletable. Joined
+    /// sources follow ``DeletedRowScope/forJoinedSource``; see
+    /// ``effectiveOnPredicate``.
+    var deletedRows: DeletedRowScope = .excluded
     /// Preloads apply when `Result == A` (the base-entity path).
     var preloads: [PreloadStep<A>] = []
     var selection: Selection<Result>? = nil
@@ -57,6 +61,9 @@ public struct JoinedQuery<A: Table, B: Table, Result: Sendable>: Sendable {
         next.isDistinct = isDistinct
         next.distinctOn = distinctOn
         next.rowLock = rowLock
+        // Carried, not dropped, for the same reason `Query.rebinding` carries
+        // it: a projection over `withDeleted()` must keep seeing deleted rows.
+        next.deletedRows = deletedRows
         next.selection = selection
         return next
     }
@@ -227,8 +234,56 @@ extension Query {
         // A lock composed before the join carries through — dropping it
         // silently would leave rows unlocked that the caller asked to lock.
         next.rowLock = rowLock
+        // The deleted-row scope is a filter like any other: dropping it here
+        // meant `StoredFile.onlyDeleted().join(...)` silently returned every
+        // row, live ones included — an explicit scope inverted by composition.
+        next.deletedRows = deletedRows
         next.preloads = preloads
         return next
+    }
+}
+
+// MARK: - Soft-delete scope
+
+extension JoinedQuery {
+    /// Include soft-deleted rows — of the base entity and of the joined
+    /// table alike, since this says "stop filtering on deletion here".
+    public func withDeleted() -> JoinedQuery<A, B, Result> {
+        var next = self
+        next.deletedRows = .included
+        return next
+    }
+
+    /// Restrict the *base* entity to its soft-deleted rows. The joined
+    /// table still excludes its own — a trash view of files joins to live
+    /// owners, not deleted ones.
+    public func onlyDeleted() -> JoinedQuery<A, B, Result> {
+        var next = self
+        next.deletedRows = .only
+        return next
+    }
+
+    /// The caller's predicate plus the base source's soft-delete condition,
+    /// qualified with whatever name the base is addressed by.
+    var effectivePredicate: Predicate? {
+        andedPredicate(
+            predicate,
+            deletedRows.condition(
+                for: A.schema.deletedAt, qualifiedBy: baseAlias ?? A.schema.name))
+    }
+
+    /// The ON condition plus the joined source's soft-delete condition.
+    ///
+    /// It belongs in ON rather than WHERE: in WHERE it would discard the
+    /// unmatched rows a LEFT JOIN exists to keep, quietly turning the outer
+    /// join into an inner one. For an inner join the two placements are
+    /// equivalent, so one rule covers both.
+    var effectiveOnPredicate: Predicate {
+        guard
+            let condition = deletedRows.forJoinedSource.condition(
+                for: B.schema.deletedAt, qualifiedBy: joinedAlias ?? B.schema.name)
+        else { return onPredicate }
+        return Predicate(expression: .infix("AND", onPredicate.expression, condition))
     }
 }
 
@@ -411,7 +466,7 @@ extension SQLRenderer {
         if let alias = query.baseAlias { sql += " AS \(quote(alias))" }
         sql += " \(query.kind.rawValue) \(B.schema.quotedName)"
         if let alias = query.joinedAlias { sql += " AS \(quote(alias))" }
-        sql += " ON \(SQLRenderer.render(query.onPredicate.expression, writer: &writer))"
+        sql += " ON \(SQLRenderer.render(query.effectiveOnPredicate.expression, writer: &writer))"
         return sql
     }
 
@@ -448,7 +503,7 @@ extension SQLRenderer {
         }
         var sql = "SELECT \(distinctClause(query.isDistinct, query.distinctOn, writer: &writer))\(list)"
         sql += " \(from)"
-        SQLRenderer.appendWhere(query.predicate, to: &sql, writer: &writer)
+        SQLRenderer.appendWhere(query.effectivePredicate, to: &sql, writer: &writer)
         if !query.grouping.isEmpty {
             let terms = query.grouping.map { SQLRenderer.render($0, writer: &writer) }.joined(separator: ", ")
             sql += " GROUP BY \(terms)"
@@ -489,7 +544,7 @@ extension SQLRenderer {
                 binds: writer.binds)
         }
         var sql = "SELECT count(*) \(try joinFromClause(query, writer: &writer))"
-        SQLRenderer.appendWhere(query.predicate, to: &sql, writer: &writer)
+        SQLRenderer.appendWhere(query.effectivePredicate, to: &sql, writer: &writer)
         return RenderedStatement(sql: sql, binds: writer.binds)
     }
 
@@ -506,7 +561,7 @@ extension SQLRenderer {
             return RenderedStatement(sql: "SELECT EXISTS (\(inner))", binds: writer.binds)
         }
         var inner = "SELECT 1 \(try joinFromClause(query, writer: &writer))"
-        SQLRenderer.appendWhere(query.predicate, to: &inner, writer: &writer)
+        SQLRenderer.appendWhere(query.effectivePredicate, to: &inner, writer: &writer)
         return RenderedStatement(sql: "SELECT EXISTS (\(inner))", binds: writer.binds)
     }
 
