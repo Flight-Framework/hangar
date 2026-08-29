@@ -1,36 +1,37 @@
 #!/usr/bin/env bash
 #
-# Runs the full suite, integration tests included, against throwaway servers.
+# Runs the full suite, integration tests included, against a throwaway server.
 #
 # The integration suites skip without a database, and a skipped suite is not a
 # passing one — this package's whole value is what it proves against real
 # infrastructure. Rather than asking a contributor to read CONTRIBUTING and
 # assemble the right environment, this starts what is needed, runs everything,
-# and cleans up.
+# and cleans up. Postgres is all Hangar needs — it has no cache layer, so
+# unlike the Flight scripts this was adapted from there is no valkey here.
 #
 #   ./scripts/test.sh                 # everything
 #   ./scripts/test.sh --filter Foo    # arguments pass through to swift test
 #
-# Set FLIGHT_KEEP_SERVERS=1 to leave the containers running between runs.
+# Set FLIGHT_KEEP_SERVERS=1 to leave the container running between runs.
 #
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
+# Assigned before the docker check: under `set -u` the check's own error
+# message referenced $pg_port, so the failure path failed.
+pg_name="hangar-test-postgres"
+pg_port=${FLIGHT_TEST_PG_PORT:-55497}
+
 if ! command -v docker >/dev/null; then
-  echo "docker is needed to start the test servers." >&2
-  echo "Already have servers? Export HANGAR_TEST_DATABASE_URL="postgres://postgres:flight@127.0.0.1:$pg_port/hangar_test" (and friends) and run swift test directly." >&2
+  echo "docker is needed to start the test server." >&2
+  echo "Already have one? Run swift test directly with:" >&2
+  echo "  export HANGAR_TEST_DATABASE_URL='postgres://postgres:flight@127.0.0.1:$pg_port/hangar_test'" >&2
   exit 1
 fi
-
-pg_name="hangar-test-postgres"
-vk_name="hangar-test-valkey"
-pg_port=${FLIGHT_TEST_PG_PORT:-55497}
-vk_port=${FLIGHT_TEST_VALKEY_PORT:-56397}
 
 cleanup() {
   if [ "${FLIGHT_KEEP_SERVERS:-0}" != "1" ]; then
     docker rm -f "$pg_name" >/dev/null 2>&1 || true
-    docker rm -f "$vk_name" >/dev/null 2>&1 || true
   fi
 }
 trap cleanup EXIT
@@ -42,7 +43,7 @@ start() { # name image port args...
   docker run -d --name "$n" -p "$port" "$@" "$image" >/dev/null
 }
 
-echo "── starting servers"
+echo "── starting the test server"
 start "$pg_name" postgres:16-alpine "$pg_port:5432" \
   -e POSTGRES_PASSWORD=flight -e POSTGRES_DB=hangar_test
 
