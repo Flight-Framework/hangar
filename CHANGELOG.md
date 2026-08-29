@@ -84,7 +84,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   two-table join — but the arity is frozen there. There will be no
   `JoinedQuery4`.
 
-- **`withDeleted()`/`onlyDeleted()` as static sugar on the entity**, beside
+- **`withDeleted()`/`onlyDeleted()` as sugar on the entity itself**, beside
   `where`/`order`/`limit`: `StoredFile.onlyDeleted().where { ... }`. The
   README showed this spelling before it existed, which is exactly what the
   compiled Snippets are for — the soft-delete section now has one.
