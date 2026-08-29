@@ -22,12 +22,46 @@ extension Query {
         if let invalid = selection?.invalid { throw invalid }
         return try SQLRenderer.select(self).postgresQuery()
     }
+
+    /// The `DELETE ... WHERE ... RETURNING` a bulk `repo.delete(self)`
+    /// renders to. Throws `HangarError.bulkWriteClause` for the same
+    /// clauses `Repo.delete` itself refuses.
+    public func debugDeleteSQL() throws -> String {
+        try SQLRenderer.delete(self).sql
+    }
+
+    /// The `UPDATE ... SET ... WHERE ... RETURNING` a bulk
+    /// `repo.update(self, set:)` renders to, given the same assignment
+    /// builder that call takes.
+    public func debugUpdateSQL<each A: Assignable>(
+        set build: (Model.QueryColumns) -> (repeat each A)
+    ) throws -> String {
+        let built = build(Model.queryColumns)
+        var assignments: [ColumnAssignment] = []
+        for assignment in repeat each built {
+            assignments.append(assignment._assignment)
+        }
+        return try SQLRenderer.update(self, set: assignments).sql
+    }
 }
 
 extension JoinedQuery {
     /// The SQL with `$n` placeholders — for logging and tests.
     public var debugSQL: String {
         (try? SQLRenderer.select(self).sql) ?? "<invalid join: \(A.self) ⋈ \(B.self)>"
+    }
+
+    /// The rendered statement with its binds applied — what `Repo` sends.
+    public func renderedQuery() throws -> PostgresQuery {
+        if let invalid = selection?.invalid { throw invalid }
+        return try SQLRenderer.select(self).postgresQuery()
+    }
+}
+
+extension JoinedQuery3 {
+    /// The SQL with `$n` placeholders — for logging and tests.
+    public var debugSQL: String {
+        (try? SQLRenderer.select(self).sql) ?? "<invalid join: \(A.self) ⋈ \(B.self) ⋈ \(C.self)>"
     }
 
     /// The rendered statement with its binds applied — what `Repo` sends.
@@ -46,6 +80,15 @@ extension Table {
     /// The `UPDATE... WHERE key... RETURNING` this model renders to.
     public func debugUpdateSQL() throws -> String {
         try SQLRenderer.update(self).sql
+    }
+}
+
+extension Array where Element: Table {
+    /// The multi-row `INSERT ... VALUES (...), (...), ... RETURNING` a
+    /// batch `repo.insert(self)` renders to — one statement regardless of
+    /// how many elements.
+    public func debugInsertSQL() throws -> String {
+        try SQLRenderer.insert(self).sql
     }
 }
 
