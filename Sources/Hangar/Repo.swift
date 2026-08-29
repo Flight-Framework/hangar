@@ -496,6 +496,15 @@ public struct Repo: Sendable {
             sequence = try await connection.query(query, logger: logger ?? Self.quietLogger)
         }
         let duration = ContinuousClock.now - start
+        // Constructed per statement rather than cached per operation on
+        // purpose. Caching was tried: `Timer(label:dimensions:)` binds to
+        // whatever factory `MetricsSystem` held when the cache was first
+        // touched, so a process that bootstraps its backend after issuing a
+        // query — which the metrics test does, and which a library cannot
+        // prevent — would then record into the no-op backend forever, with
+        // nothing to see. Swapping a robustness property for an unmeasured
+        // allocation is the wrong trade for a package that argues from
+        // benchmarks; if this ever shows up in one, cache it then.
         Timer(
             label: "hangar.query.duration",
             dimensions: [("operation", operation)],
