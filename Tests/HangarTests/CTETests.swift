@@ -172,7 +172,9 @@ struct CTERendererTests {
     }
 }
 
-@Suite("CTE — against Postgres", .serialized)
+@Suite(
+    "CTE — against Postgres", .serialized,
+    .enabled(if: TestDatabase.isConfigured, "set HANGAR_TEST_DATABASE_URL to run"))
 struct CTEIntegrationTests {
 
     /// root → a → a1, and a detached sibling that must not appear.

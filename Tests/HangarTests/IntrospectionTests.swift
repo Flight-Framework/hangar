@@ -200,7 +200,9 @@ struct EntityGeneratorTests {
     }
 }
 
-@Suite("Introspection against Postgres", .serialized)
+@Suite(
+    "Introspection against Postgres", .serialized,
+    .enabled(if: TestDatabase.isConfigured, "set HANGAR_TEST_DATABASE_URL to run"))
 struct SchemaIntrospectorTests {
 
     @Test("the fixture schema is read back with its real shapes")

@@ -9,7 +9,9 @@ import Testing
 /// Every statement is already timed; these assert that the timing becomes a
 /// log line naming the SQL, because a p99 on a dashboard cannot tell you
 /// *which* query is slow.
-@Suite("Query diagnostics", .serialized)
+@Suite(
+    "Query diagnostics", .serialized,
+    .enabled(if: TestDatabase.isConfigured, "set HANGAR_TEST_DATABASE_URL to run"))
 struct DiagnosticsTests {
 
     private func repoWithRecorder(

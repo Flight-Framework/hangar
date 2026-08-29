@@ -5,7 +5,9 @@ import Testing
 
 /// `EXPLAIN`, which is the other half of the slow-query diagnostics: those
 /// say which statement is slow, this says why.
-@Suite("Explain", .serialized)
+@Suite(
+    "Explain", .serialized,
+    .enabled(if: TestDatabase.isConfigured, "set HANGAR_TEST_DATABASE_URL to run"))
 struct ExplainTests {
 
     @Test("a plan comes back as the text psql would show")

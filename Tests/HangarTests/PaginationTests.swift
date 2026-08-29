@@ -57,7 +57,9 @@ struct PageArithmeticTests {
     }
 }
 
-@Suite("Pagination against Postgres", .serialized)
+@Suite(
+    "Pagination against Postgres", .serialized,
+    .enabled(if: TestDatabase.isConfigured, "set HANGAR_TEST_DATABASE_URL to run"))
 struct PaginationIntegrationTests {
 
     private func seed(_ repo: Repo, count: Int) async throws {

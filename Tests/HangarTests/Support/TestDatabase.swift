@@ -6,10 +6,19 @@ import PostgresNIO
 import Testing
 
 /// The enclosing suite every DB-touching suite nests in (via extension).
+///
 /// `.serialized` on the parent applies recursively, so suites that share
 /// the fixture tables never truncate them under each other — same pattern
 /// as flight-data-postgres's `PostgresIntegrationSuite`.
-@Suite(.serialized) struct PostgresIntegrationSuite {}
+///
+/// `.enabled(if:)` is here for the same reason: a suite trait applies to
+/// everything nested inside it, so nesting is all a new integration suite
+/// has to remember. Carrying the gate per-suite is what nine files did and
+/// seven forgot, and a forgotten gate does not skip — it fails the whole
+/// run with `.notConfigured` when a CI secret is missing, which reads as a
+/// broken build rather than an unconfigured one.
+@Suite(.serialized, .enabled(if: TestDatabase.isConfigured, "set HANGAR_TEST_DATABASE_URL to run"))
+struct PostgresIntegrationSuite {}
 
 /// Integration tests run against a real Postgres — the whole value of a
 /// query layer is that its SQL is real; mocking the connection would test
@@ -205,6 +214,7 @@ actor TestSchema {
             #"DROP TABLE IF EXISTS "hangar_tags""#,
             #"DROP TABLE IF EXISTS "hangar_post_tags""#,
             #"DROP TABLE IF EXISTS "hangar_tagged_posts""#,
+            #"DROP TABLE IF EXISTS "hangar_nodes""#,
             #"DROP TYPE IF EXISTS "post_status""#,
             #"CREATE TYPE "post_status" AS ENUM ('draft', 'published', 'archived')"#,
             #"""

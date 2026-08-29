@@ -9,7 +9,9 @@ import Testing
 /// *by default*, on every read path. A soft delete that one code path
 /// forgets is worse than none: the row looks gone in a list and reappears in
 /// a count, and nothing errors.
-@Suite("Soft delete", .serialized)
+@Suite(
+    "Soft delete", .serialized,
+    .enabled(if: TestDatabase.isConfigured, "set HANGAR_TEST_DATABASE_URL to run"))
 struct SoftDeleteTests {
 
     private func seed(_ repo: Repo) async throws -> (live: StoredFile, doomed: StoredFile) {
