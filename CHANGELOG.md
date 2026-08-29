@@ -4,6 +4,158 @@ All notable changes are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-08-29
+
+### Fixed
+
+- **Soft-delete scope is no longer dropped by joins.** `Query` applied the
+  deleted-row scope through `effectivePredicate` on every read path; every
+  *join* form rendered `predicate` directly and carried no scope at all. The
+  conversion from a `Query` copied the predicate, the grouping, the row lock,
+  even the preloads — and left the scope behind. So
+  `StoredFile.all.join(Author.self, ...)` silently included deleted files, and
+  `StoredFile.onlyDeleted().join(...)` — an *explicit* request for deleted rows
+  only — silently returned every row instead, an explicit scope inverted by
+  composition. `JoinedQuery`, `JoinedQuery3` and `ComposedQuery` now all carry
+  a `DeletedRowScope`, with `withDeleted()`/`onlyDeleted()` on each.
+
+  The rule, in one sentence: **the base entity is scoped in `WHERE`, every
+  soft-deletable joined table excludes its own deleted rows in its `ON`
+  clause, and `withDeleted()` lifts both.** `ON` rather than `WHERE` for the
+  joined side is what keeps a `LEFT JOIN` outer — in `WHERE` the condition
+  discards exactly the unmatched rows the outer join exists to keep, turning
+  it into an inner join with nothing to see. `.only` scopes the base alone: a
+  trash view of files still joins to live owners.
+
+  **This changes the SQL existing join queries render** whenever a
+  soft-deletable entity is involved. That is the point — the previous
+  behavior was a wrong answer, not a contract — but a query that was
+  compensating with its own `deletedAt == nil` predicate will now say it
+  twice (harmless), and one that was *relying* on deleted rows appearing
+  needs `withDeleted()` spelled out.
+
+- **`ColumnDefinition`'s equality now includes `isDeletedAt`**, which its own
+  doc-comment ("equality over every recorded property") already claimed.
+
+- **`HangarVapor.RunningClient.init` no longer takes a `logger`** it never
+  used — `PostgresClient` was handed its `backgroundLogger` at construction,
+  so the parameter was only ever an unused argument at the single call site.
+  (Released separately in `hangar-vapor`.)
+
+- **`scripts/test.sh`'s docker-missing path** referenced `$pg_port` before
+  assigning it, so under `set -u` the error message itself errored; the
+  suggested export line was mangled by nested quoting. Both fixed, and the
+  vestigial valkey container — defined and cleaned up, never started, copied
+  from the Flight scripts — is gone.
+
+### Added
+
+- **`Table.query { }`: joins of any width, built by name instead of by
+  position.** `JoinedQuery`/`JoinedQuery3` fix the join count in the type,
+  so a fourth table needs a fourth struct and every downstream closure takes
+  one positional argument per table. `Table.query { }` hands a builder whose
+  every `q.join` mints a fresh alias and returns that table's typed columns
+  as an ordinary `let`, so five joins read as five bindings:
+
+  ```swift
+  Order.query { q in
+      let order = q.base
+      let customer = q.join(Customer.self) { $0.id == order.customerID }
+      let item = q.join(OrderItem.self) { $0.orderID == order.id }
+      q.where(customer.active)
+      return q.select(into: OrderReport.self) {
+          (id: order.id, customer: customer.name, quantity: item.quantity)
+      }
+  }
+  ```
+
+  The value it produces, `ComposedQuery<Base, Result>`, has two type
+  parameters however many tables it joins: `SQLExpression`/`OrderTerm` carry
+  only name strings, so nothing about rendering needs the joined Swift type
+  once its ON-predicate is built. Self-joins need no `.alias(_:)` — collision
+  is impossible by construction. `repo.all`/`one`/`count`/`exists`, preloads
+  on the base-entity path, and the soft-delete scope all work as they do on
+  the fixed-arity forms; `count`/`exists` follow the same
+  changes-what-a-row-is subquery rules. Mutating the builder after
+  `q.query()`/`q.select` has snapshotted it traps rather than being silently
+  ignored.
+
+  `JoinedQuery`/`JoinedQuery3` stay — their closure form is nicer for a quick
+  two-table join — but the arity is frozen there. There will be no
+  `JoinedQuery4`.
+
+- **`withDeleted()`/`onlyDeleted()` as static sugar on the entity**, beside
+  `where`/`order`/`limit`: `StoredFile.onlyDeleted().where { ... }`. The
+  README showed this spelling before it existed, which is exactly what the
+  compiled Snippets are for — the soft-delete section now has one.
+
+- **A composite-key diagnostic on `@Entity`.** An entity with more than one
+  `@ID` batches its has-many/has-one preloads on the first key column alone.
+  That is a defensible convention; taking it silently is not, so the macro
+  now warns and names the column it chose.
+
+- **`HangarIntrospection` refuses to describe a composite foreign key.** It
+  reads `con.conkey[1]`/`con.confkey[1]` — the first column pair — so the
+  comment it emitted for a two-column constraint described a one-column key
+  that does not exist, and the `@BelongsTo` shape it suggested alongside
+  would not have worked. Composite constraints now carry their width and
+  name and generate a TODO comment naming both, in the same spirit as the
+  unmappable-type refusal.
+
+- **Ordering comparisons against nullable columns.** `<`, `>`, `<=`, `>=`
+  now have `Column<V?>` overloads — `==`/`!=` already did. Without them, the
+  most ordinary query a `@Deleted` column has ("purge everything soft-deleted
+  before this date") did not compile, and neither did any range over a
+  nullable timestamp (`closed_at`, `published_at`, `resolved_at`). The
+  right-hand side stays non-optional: `deletedAt < nil` has no meaning in
+  SQL, and keeping `nil` out of these signatures is what guarantees `== nil`
+  still renders `IS NULL` rather than being captured by a new overload.
+- **`debugSQL` coverage for every write and join shape added since the
+  round-1 pass.** `Query.debugDeleteSQL()`, `Query.debugUpdateSQL(set:)`,
+  `Array<Table>.debugInsertSQL()`, and `JoinedQuery3.debugSQL` /
+  `.renderedQuery()` — bulk delete, bulk update, batch insert, and
+  three-table joins previously had no way to see the SQL they render to
+  without executing them. Added mainly to let `hangar-bench` measure these
+  shapes client-side the same way every other query shape already was, but
+  real API on its own: the same escape hatch `debugSQL` already gave every
+  single-table and two-table query.
+- **Benchmark coverage for everything Phase 0–7 and the 0.2.0 release
+  added.** `hangar-bench` and `BENCHMARKS.md` had not been touched since
+  before that work landed, so none of it — bulk delete/update, batch
+  insert, three-table joins, pagination, soft delete, query diagnostics —
+  had a measured number. Batch insert turned out to be the largest ratio in
+  the whole file (~24× over individual round trips); soft delete and query
+  diagnostics turned out to cost nothing measurable when idle, which is
+  itself the finding worth having on record rather than assumed.
+
+- **A `ComposedQuery` vs. `JoinedQuery3` comparison in `BENCHMARKS.md`**, the
+  numbers `hangar-bench`'s own comment was already pointing at. The erased
+  form is the cheaper one client-side (~1.15× rendering, ~1.24× projected,
+  both reproduced across two runs) and indistinguishable end to end, where
+  the round trip dominates. The bench's fixture seeding now goes through the
+  batch insert rather than 480 individual round trips.
+
+### Changed
+
+- **The query-duration `Timer` stays per statement, on the record.** Caching
+  the per-operation timers was tried and reverted:
+  `Timer(label:dimensions:)` binds to whichever factory `MetricsSystem` held
+  at construction, so a cached set binds to whatever was bootstrapped when
+  the first query ran — and a process that bootstraps its backend afterwards
+  then records into the no-op handler forever, silently. A library cannot
+  control that ordering. Trading a robustness property for an allocation
+  nothing has measured is the wrong direction for this package; the reason
+  is now a comment in `Repo.execute` rather than something to re-discover.
+
+- **Every database-touching test suite is gated.** `PostgresIntegrationSuite`
+  now carries `.enabled(if: TestDatabase.isConfigured)`, which applies to
+  everything nested inside it, and the six free-standing suites carry it
+  directly. Nine of twenty-eight test files had the trait and seven that
+  needed it did not — and a missing gate does not skip, it fails the run with
+  `.notConfigured`, turning an unconfigured CI secret into what reads as a
+  broken build. `swift test` with no `HANGAR_TEST_DATABASE_URL` is clean
+  again.
+
 ## [0.2.0] - 2026-08-25
 
 ### Added
