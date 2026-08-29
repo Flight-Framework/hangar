@@ -101,6 +101,134 @@ benchmark that isn't isolating what it claims is worse than none.
 
 ~5× for asking for less. `select` is not a nicety.
 
+### Batch insert: the largest ratio in this file
+
+| | |
+|---|---|
+| 100 rows via one batch statement | 3.9 ms |
+| 100 rows via 100 round trips | 92.3 ms |
+
+**~24×**, and the widest margin measured anywhere in this document —
+wider than preloading's, because every one of the 100 round trips pays the
+same per-statement floor the preload comparison's 50 did, and there are
+twice as many of them. Stable across repeated runs (21.97× and 23.6× on
+two separate passes), which is worth noting explicitly: several of the
+numbers in this file move with machine load, and this one does not move
+much, because both sides are dominated by round-trip count rather than by
+anything Postgres has to think about.
+
+### Bulk delete and update: one statement vs. N round trips
+
+| | |
+|---|---|
+| delete 20 rows via one statement | 3.0 ms |
+| delete 20 rows via 20 round trips | 18.7 ms |
+| update 20 rows via one statement | 1.6 ms |
+| update 20 rows via 20 round trips | 19.1 ms |
+
+**~6× for delete, ~12× for update**, both stable across two runs (6.17×/6.27×
+and 11.98×/12.04×). The two ratios differ because they are not measuring
+quite the same shape: the naive delete already holds the rows it is
+deleting (they came back from the batch insert that seeded the group), so
+its 20 round trips are 20 bare `DELETE`s. The naive update path in real code
+would first have to *fetch* what it means to change; this benchmark hands
+it the rows already in memory, so even this ~12× understates the naive
+path's real cost against a database that also has to be read from first.
+
+### Three-table join: no hidden per-hop cost
+
+| | |
+|---|---|
+| fetch via three-table join (200 rows, 3-column projection), 200 iterations | 1.8 ms |
+
+Phase 5 added three-table joins by extending the same renderer that already
+handled two, rather than writing a second one — this is the number that
+proves the extension didn't come with a per-hop tax. It lands in the same
+range as this file's other small-result-set round trips rather than scaling
+up with join count, which is the result the design predicts and the reason
+it was worth checking rather than assuming.
+
+### Pagination: the count is not free
+
+| | |
+|---|---|
+| plain `LIMIT 20`, no count | 0.34 ms |
+| `page(20 per page)` — slice + total | 0.84 ms |
+
+`repo.page` runs the slice and the count *sequentially* — two queries from
+one pool under a request-scoped connection is how a pool deadlocks under
+load, and that guarantee is worth more than the round trip it costs. This is
+that cost, quantified: roughly another simple query's worth, consistent
+across two runs (2.46× and 2.44×). Reach for `page` because of what it
+answers, not for free — a UI that never needs `page.total` should stay with
+a plain `limit`.
+
+### Soft delete and query diagnostics: opt-in features that cost nothing to leave on
+
+| | |
+|---|---|
+| `SELECT` over 1000 plain rows | 0.70 ms |
+| `SELECT` over 1000 soft-deletable rows | 0.73 ms |
+| `SELECT` one row, diagnostics off (default) | 167 µs |
+| `SELECT` one row, diagnostics on (`.recommended`) | 160 µs |
+
+Soft delete's `deleted_at IS NULL` predicate costs a real but small amount
+— **~4.5%** across two runs (4.3% and 4.7%), close enough to this
+document's own stated round-trip noise floor that "small" is a more honest
+word for it than a precise percentage.
+
+Query diagnostics costs *nothing measurable*: one run showed the
+diagnostics-on path 4.6% slower, the next showed it 4.2% faster — the sign
+flipped between runs, which is the signature of a difference indistinguishable
+from noise rather than a real one. That is the finding, stated as what it
+is rather than rounded into a number that looks more precise than the data
+supports: turning on `.recommended` diagnostics for a query nowhere near its
+200ms threshold has no detectable cost.
+
+### `Table.query { }` vs. `JoinedQuery3`: the wider API is also the cheaper one
+
+The same three-table join (order ⋈ customer ⋈ item), expressed both ways.
+Client-side only — the two produce the same SQL shape for Postgres to plan,
+so what is actually comparable is the Swift-side cost of building and
+rendering, which every call site pays before a byte reaches the wire.
+
+| | |
+|---|---|
+| `JoinedQuery3`, render only | 4.53 µs |
+| `ComposedQuery`, render only | 3.94 µs |
+| `JoinedQuery3`, with `select(into:)` | 10.02 µs |
+| `ComposedQuery`, with `select(into:)` | 8.11 µs |
+
+**~1.15× rendering, ~1.24× projected**, and both ratios reproduced to two
+decimal places on a second run (1.15× and 1.24× again) — the tightest
+agreement between runs anywhere in this file, because neither side touches
+the network or the allocator much.
+
+The direction is worth a sentence, because it is the opposite of what
+"erased join list" usually implies. `JoinedQuery3` carries three
+`QueryColumns` values and a fixed field set through every copy, and its
+`select(into:)` walks a three-argument closure's tuple; `ComposedQuery`
+carries an array of small clause structs and its projection closure takes no
+arguments at all. Erasure removed work here rather than adding an indirection
+— but at ~4 µs against a ~300 µs round trip, this is a reason not to worry
+about the wider API, not a reason to choose it.
+
+| | |
+|---|---|
+| `JoinedQuery3`, 3-table join, real rows | 325 µs |
+| `ComposedQuery`, same join, real rows | 321 µs |
+| `ComposedQuery`, 5-table join, 240 real rows | 1.37 ms |
+
+Against a real server the difference disappears into the round trip, as the
+client-side numbers predict: 1.01× on one run and 1.05× on the next, which is
+this file's noise floor rather than a finding. The extra alias qualification
+`ComposedQuery` always emits (`AS "t0"`, `AS "t1"`, ... even when nothing is
+ambiguous) costs Postgres's planner nothing measurable.
+
+The five-table row is not a comparison — there is no `JoinedQuery4` to run it
+against. It is here to record that arbitrary width lands in the same range as
+everything else round-trip-shaped rather than scaling with join count.
+
 ### Streaming: same speed, flat memory
 
 | | |
@@ -158,8 +286,30 @@ local.
 ## What is not measured yet
 
 - Concurrency: everything here is sequential. Pool behavior under
-  contention is unmeasured.
+  contention is unmeasured — including row-lock blocking
+  (`lockForUpdate()`/`lockForShare()`) and isolation-level retry under real
+  write-skew, both of which only show up under concurrent load and need a
+  contention harness this file does not have.
 - Large `IN`/`ANY` payloads beyond 1000 keys (1000 UUIDs currently costs
   ~116µs to bind, which is encoding, not Hangar overhead).
 - Transactions and `Multi` throughput.
 - Memory, as opposed to time.
+- `EXPLAIN` itself — it wraps and (with `.analyze`) runs the query it is
+  given, so timing it mostly measures Postgres's own planner and executor,
+  not anything Hangar contributes.
+- Schema introspection (`HangarIntrospection`) — a build-time code
+  generation tool, not a runtime query path, so it has a different
+  performance profile than everything else in this file and does not
+  belong next to it.
+- `@HasMany(through:)` round trips — not because it is unmeasured in
+  substance, but because it is the same batched, two-query shape as the
+  preloading numbers above, run through the same `= ANY($1)` mechanism. A
+  dedicated benchmark would re-prove a ratio this file already has.
+- Nullable-column ordering comparisons (`<`, `>`, `<=`, `>=` on
+  `Column<V?>`) — the identical `Predicate(expression: .infix(...))` code
+  path as the non-nullable overloads already benchmarked above; there is no
+  new performance characteristic to isolate.
+- The soft-delete scope on a *join* — the same one-term `AND (... IS NULL)`
+  the single-table measurement above already priced at "small", added to an
+  ON or WHERE clause that is already several terms long. Re-measuring it
+  per join arity would re-prove a number this file has.

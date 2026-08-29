@@ -34,7 +34,7 @@ func softDeleteShapes(repo: Repo, cutoff: Date) async throws {
     // `<` on a nullable column is what makes this an ordinary query.
     try await repo.delete(SnippetFile.onlyDeleted().where { $0.deletedAt < cutoff })
 
-    // The scope survives a join. The base entity's rows are
+    // The scope survives a join, in every form. The base entity's rows are
     // scoped in WHERE; a soft-deletable *joined* table excludes its own
     // deleted rows in the ON clause, so a LEFT JOIN stays outer.
     _ = try await repo.all(
@@ -44,4 +44,13 @@ func softDeleteShapes(repo: Repo, cutoff: Date) async throws {
     _ = try await repo.all(
         SnippetOwner.leftJoin(SnippetFile.self, on: { owner, file in file.ownerID == owner.id })
             .distinct())
+
+    // Composed joins take the same scope operators.
+    _ = try await repo.all(
+        SnippetFile.query { q in
+            let file = q.base
+            _ = q.join(SnippetOwner.self) { $0.id == file.ownerID }
+            q.withDeleted()
+            return q.query()
+        })
 }

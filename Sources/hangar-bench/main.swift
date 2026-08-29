@@ -2,6 +2,12 @@ import Foundation
 import Hangar
 import PostgresNIO
 
+#if canImport(Glibc)
+    import Glibc
+#elseif canImport(Darwin)
+    import Darwin
+#endif
+
 // Hangar's benchmark harness. Two families of measurement, deliberately
 // separated because they answer different questions:
 //
@@ -46,6 +52,54 @@ struct BenchAuthor: Sendable {
 
     @HasMany(foreignKey: \BenchPost.authorID)
     var posts: Loadable<[BenchPost]>
+}
+
+// The join-comparison domain: JoinedQuery3 vs. ComposedQuery
+// (Table.query { }) built and run over an identical schema and identical
+// seed data, plus a 5-table query JoinedQuery3 cannot express at all
+// (it caps at 3 tables) — see BENCHMARKS.md for the numbers this produces.
+
+@Entity("bench_customers")
+struct BenchCustomer: Sendable {
+    @ID let id: UUID
+    var name: String
+    var active: Bool
+}
+
+@Entity("bench_orders")
+struct BenchOrder: Sendable {
+    @ID let id: UUID
+    var customerID: UUID
+}
+
+@Entity("bench_order_items")
+struct BenchOrderItem: Sendable {
+    @ID let id: UUID
+    var orderID: UUID
+    var productID: UUID
+    var quantity: Int
+}
+
+@Entity("bench_products")
+struct BenchProduct: Sendable {
+    @ID let id: UUID
+    var name: String
+    var categoryID: UUID
+}
+
+@Entity("bench_categories")
+struct BenchCategory: Sendable {
+    @ID let id: UUID
+    var name: String
+    var visible: Bool
+}
+
+struct BenchOrderReport: Decodable, Sendable {
+    let orderID: UUID
+    let customerName: String
+    let productName: String
+    let categoryName: String
+    let quantity: Int
 }
 
 // MARK: - Timing
@@ -102,6 +156,89 @@ func report(_ name: String, _ per: Duration, iterations: Int) {
 func section(_ title: String) {
     print("\n\(title)")
     print(String(repeating: "─", count: 72))
+}
+
+// MARK: - CPU/memory (JoinedQuery3 vs. ComposedQuery comparison only)
+//
+// `getrusage` is process-wide, not per-call — there is no OS primitive for
+// "CPU time this one closure used" the way `ContinuousClock` gives wall
+// time for free. Two things make a before/after snapshot around one tight
+// loop meaningful anyway: this benchmark process does nothing concurrent
+// (single task, no background work competing for the counters), and
+// `ru_maxrss` is already a running high-water mark, so its delta answers a
+// real question — "did this workload push the process's peak resident set
+// higher" — even though it can never show memory that was allocated and
+// freed again without raising the peak.
+
+struct ResourceUsage {
+    let userSeconds: Double
+    let systemSeconds: Double
+    let maxRSSKilobytes: Int
+}
+
+func snapshotResources() -> ResourceUsage {
+    var usage = rusage()
+    #if canImport(Glibc)
+        getrusage(RUSAGE_SELF.rawValue, &usage)
+    #else
+        getrusage(RUSAGE_SELF, &usage)
+    #endif
+    let user = Double(usage.ru_utime.tv_sec) + Double(usage.ru_utime.tv_usec) / 1_000_000
+    let system = Double(usage.ru_stime.tv_sec) + Double(usage.ru_stime.tv_usec) / 1_000_000
+    // Linux reports ru_maxrss in kilobytes already; Darwin reports bytes —
+    // normalized to KB either way so the printed numbers mean the same
+    // thing regardless of platform.
+    #if canImport(Glibc)
+        let maxRSSKB = usage.ru_maxrss
+    #else
+        let maxRSSKB = usage.ru_maxrss / 1024
+    #endif
+    return ResourceUsage(userSeconds: user, systemSeconds: system, maxRSSKilobytes: maxRSSKB)
+}
+
+/// Like `measure`, plus CPU time and peak-RSS deltas over the same
+/// iterations — used only for the JoinedQuery3-vs-ComposedQuery
+/// comparison below, where the whole point is measuring the builder's own
+/// overhead, not just wall time.
+@discardableResult
+func measureWithResources(
+    _ name: String, iterations: Int, warmup: Int = 100, _ body: () throws -> Void
+) rethrows -> Duration {
+    for _ in 0..<warmup { try body() }
+    let before = snapshotResources()
+    let clock = ContinuousClock()
+    let elapsed = try clock.measure {
+        for _ in 0..<iterations { try body() }
+    }
+    let after = snapshotResources()
+    report(name, elapsed / iterations, iterations: iterations)
+    reportResources(before: before, after: after, iterations: iterations)
+    return elapsed / iterations
+}
+
+@discardableResult
+func measureAsyncWithResources(
+    _ name: String, iterations: Int, warmup: Int = 5, _ body: () async throws -> Void
+) async throws -> Duration {
+    for _ in 0..<warmup { try await body() }
+    let before = snapshotResources()
+    let clock = ContinuousClock()
+    let start = clock.now
+    for _ in 0..<iterations { try await body() }
+    let elapsed = clock.now - start
+    let after = snapshotResources()
+    report(name, elapsed / iterations, iterations: iterations)
+    reportResources(before: before, after: after, iterations: iterations)
+    return elapsed / iterations
+}
+
+func reportResources(before: ResourceUsage, after: ResourceUsage, iterations: Int) {
+    let cpuDeltaSeconds = (after.userSeconds - before.userSeconds) + (after.systemSeconds - before.systemSeconds)
+    let cpuPerIterMicros = (cpuDeltaSeconds / Double(iterations)) * 1_000_000
+    let rssDeltaKB = after.maxRSSKilobytes - before.maxRSSKilobytes
+    let cpuText = String(format: "%7.2f µs CPU/iter", cpuPerIterMicros)
+    let rssText = rssDeltaKB > 0 ? "+\(rssDeltaKB) KB peak RSS over the run" : "no peak-RSS growth"
+    print("  \(String(repeating: " ", count: 46)) \(cpuText)   (\(rssText))")
 }
 
 // MARK: - Client-side benchmarks (no server)
@@ -162,6 +299,206 @@ func clientSideBenchmarks() throws {
 }
 
 let benchKeys: [UUID] = (0..<1_000).map { _ in UUID() }
+
+// MARK: - JoinedQuery3 vs. ComposedQuery (Table.query { })
+
+/// The apples-to-apples 3-table join both APIs can express: order → customer,
+/// order → item. Client-side only (render, no server) — the two APIs
+/// produce the same SQL shape for Postgres to plan and run, so any
+/// execution-time difference downstream would be noise; what's actually
+/// comparable is the Swift-side cost of building and rendering the query
+/// itself, which is what every iteration here pays before a byte reaches
+/// the wire.
+func joinComparisonClientSide() {
+    section("JoinedQuery3 vs. ComposedQuery — equivalent 3-table join (render only)")
+
+    measureWithResources("JoinedQuery3: order ⋈ customer ⋈ item", iterations: 100_000) {
+        blackHole(
+            BenchOrder.join(BenchCustomer.self, on: { order, customer in order.customerID == customer.id })
+                .join(BenchOrderItem.self, on: { order, _, item in item.orderID == order.id })
+                .debugSQL)
+    }
+
+    measureWithResources("ComposedQuery: order ⋈ customer ⋈ item", iterations: 100_000) {
+        let query = BenchOrder.query { q in
+            let order = q.base
+            _ = q.join(BenchCustomer.self) { $0.id == order.customerID }
+            _ = q.join(BenchOrderItem.self) { $0.orderID == order.id }
+            return q.query()
+        }
+        blackHole(query.debugSQL)
+    }
+
+    section("...the same comparison, projected — the shape a real call site actually uses")
+
+    measureWithResources("JoinedQuery3: same join, select(into:)", iterations: 100_000) {
+        blackHole(
+            BenchOrder.join(BenchCustomer.self, on: { order, customer in order.customerID == customer.id })
+                .join(BenchOrderItem.self, on: { order, _, item in item.orderID == order.id })
+                .select(into: BenchOrderItemRow.self) { order, customer, item in
+                    (orderID: order.id, customerName: customer.name, quantity: item.quantity)
+                }
+                .debugSQL)
+    }
+
+    measureWithResources("ComposedQuery: same join, select(into:)", iterations: 100_000) {
+        let query = BenchOrder.query { q in
+            let order = q.base
+            let customer = q.join(BenchCustomer.self) { $0.id == order.customerID }
+            let item = q.join(BenchOrderItem.self) { $0.orderID == order.id }
+            return q.select(into: BenchOrderItemRow.self) {
+                (orderID: order.id, customerName: customer.name, quantity: item.quantity)
+            }
+        }
+        blackHole(query.debugSQL)
+    }
+
+    section("The 5-table query JoinedQuery3 cannot express at all (caps at 3 tables)")
+    print("  No comparison to print here — there is no JoinedQuery4/5 to run against.")
+    print("  This is new capability, not a speed delta. Timed on its own for reference:")
+
+    measureWithResources("ComposedQuery: order ⋈ customer ⋈ item ⋈ product ⋈ category", iterations: 100_000) {
+        let query = BenchOrder.query { q in
+            let order = q.base
+            let customer = q.join(BenchCustomer.self) { $0.id == order.customerID }
+            let item = q.join(BenchOrderItem.self) { $0.orderID == order.id }
+            let product = q.join(BenchProduct.self) { $0.id == item.productID }
+            let category = q.join(BenchCategory.self) { $0.id == product.categoryID }
+            q.where(customer.active && category.visible)
+            return q.select(into: BenchOrderReport.self) {
+                (
+                    orderID: order.id, customerName: customer.name, productName: product.name,
+                    categoryName: category.name, quantity: item.quantity
+                )
+            }
+        }
+        blackHole(query.debugSQL)
+    }
+}
+
+struct BenchOrderItemRow: Decodable, Sendable {
+    let orderID: UUID
+    let customerName: String
+    let quantity: Int
+}
+
+/// Same comparison, executed against real rows — captures anything the
+/// render-only comparison couldn't: decode cost, and whether the extra
+/// alias qualification ComposedQuery always emits (`AS "t0"`, `AS "t1"`...,
+/// even when nothing is ambiguous) changes Postgres's own planning time.
+func joinComparisonRoundTrip(_ repo: Repo) async throws {
+    section("JoinedQuery3 vs. ComposedQuery — same 3-table join, real Postgres")
+
+    let customerID = seededCustomerID
+    try await measureAsyncWithResources("JoinedQuery3: order ⋈ customer ⋈ item, real rows", iterations: 300) {
+        blackHole(
+            try await repo.all(
+                BenchOrder.join(BenchCustomer.self, on: { order, customer in order.customerID == customer.id })
+                    .join(BenchOrderItem.self, on: { order, _, item in item.orderID == order.id })
+                    .where { order, _, _ in order.customerID == customerID }
+                    .select(into: BenchOrderItemRow.self) { order, customer, item in
+                        (orderID: order.id, customerName: customer.name, quantity: item.quantity)
+                    }))
+    }
+
+    try await measureAsyncWithResources("ComposedQuery: order ⋈ customer ⋈ item, real rows", iterations: 300) {
+        blackHole(
+            try await repo.all(
+                BenchOrder.query { q in
+                    let order = q.base
+                    let customer = q.join(BenchCustomer.self) { $0.id == order.customerID }
+                    let item = q.join(BenchOrderItem.self) { $0.orderID == order.id }
+                    q.where(order.customerID == customerID)
+                    return q.select(into: BenchOrderItemRow.self) {
+                        (orderID: order.id, customerName: customer.name, quantity: item.quantity)
+                    }
+                }))
+    }
+
+    section("The 5-table query, executed for real — proof it isn't just a rendering trick")
+    let reports = try await repo.all(
+        BenchOrder.query { q in
+            let order = q.base
+            let customer = q.join(BenchCustomer.self) { $0.id == order.customerID }
+            let item = q.join(BenchOrderItem.self) { $0.orderID == order.id }
+            let product = q.join(BenchProduct.self) { $0.id == item.productID }
+            let category = q.join(BenchCategory.self) { $0.id == product.categoryID }
+            q.where(customer.active && category.visible)
+            return q.select(into: BenchOrderReport.self) {
+                (
+                    orderID: order.id, customerName: customer.name, productName: product.name,
+                    categoryName: category.name, quantity: item.quantity
+                )
+            }
+        })
+    print("  \(reports.count) real rows decoded (active customers, visible categories only)")
+    if let sample = reports.first {
+        print(
+            "  sample: order \(sample.orderID) — \(sample.customerName) bought \(sample.quantity)× \(sample.productName) (\(sample.categoryName))"
+        )
+    }
+
+    try await measureAsyncWithResources(
+        "ComposedQuery: order ⋈ customer ⋈ item ⋈ product ⋈ category, real rows", iterations: 300
+    ) {
+        blackHole(
+            try await repo.all(
+                BenchOrder.query { q in
+                    let order = q.base
+                    let customer = q.join(BenchCustomer.self) { $0.id == order.customerID }
+                    let item = q.join(BenchOrderItem.self) { $0.orderID == order.id }
+                    let product = q.join(BenchProduct.self) { $0.id == item.productID }
+                    let category = q.join(BenchCategory.self) { $0.id == product.categoryID }
+                    q.where(customer.active && category.visible)
+                    return q.select(into: BenchOrderReport.self) {
+                        (
+                            orderID: order.id, customerName: customer.name, productName: product.name,
+                            categoryName: category.name, quantity: item.quantity
+                        )
+                    }
+                }))
+    }
+}
+
+nonisolated(unsafe) var seededCustomerID = UUID()
+
+/// 20 customers, 10 categories, 50 products, 100 orders, ~300 order items —
+/// enough spread that the join actually does work, small enough that
+/// seeding itself doesn't dominate the benchmark run. A fifth of customers
+/// inactive and a fifth of categories hidden, so `q.where(customer.active
+/// && category.visible)` in the 5-table query actually filters something.
+func seedJoinComparisonFixture(_ repo: Repo) async throws {
+    // Seeded through the batch insert, not 480 individual round trips —
+    // outside the measured regions either way, but the shape this file's
+    // own ~24× batch-insert number says to use, and it exercises the batch
+    // path incidentally on every run.
+    let customers = try await repo.insert(
+        (0..<20).map { BenchCustomer(id: UUID(), name: "customer-\($0)", active: $0 % 5 != 0) })
+    seededCustomerID = customers.first(where: \.active)!.id
+
+    let categories = try await repo.insert(
+        (0..<10).map { BenchCategory(id: UUID(), name: "category-\($0)", visible: $0 % 5 != 0) })
+
+    let products = try await repo.insert(
+        (0..<50).map { index in
+            BenchProduct(
+                id: UUID(), name: "product-\(index)",
+                categoryID: categories[index % categories.count].id)
+        })
+
+    let orders = try await repo.insert(
+        (0..<100).map { index in
+            BenchOrder(id: UUID(), customerID: customers[index % customers.count].id)
+        })
+
+    _ = try await repo.insert(
+        (0..<300).map { index in
+            BenchOrderItem(
+                id: UUID(), orderID: orders[index % orders.count].id,
+                productID: products[index % products.count].id,
+                quantity: 1 + (index % 5))
+        })
+}
 
 // The prepared-statement protocol demands a *static* SQL string; Hangar's
 // is built at runtime. This global is the seam that lets the benchmark
@@ -321,6 +658,7 @@ print("=================")
 #endif
 
 try clientSideBenchmarks()
+joinComparisonClientSide()
 
 guard let databaseURL, let components = URLComponents(string: databaseURL) else {
     print("\nHANGAR_TEST_DATABASE_URL not set — skipping round-trip benchmarks.")
@@ -367,15 +705,67 @@ try await withThrowingTaskGroup(of: Void.self) { group in
         """#,
         #"CREATE INDEX ON "bench_posts" ("author_id")"#,
         #"CREATE INDEX ON "bench_posts" ("view_count")"#,
+        #"DROP TABLE IF EXISTS "bench_order_items""#,
+        #"DROP TABLE IF EXISTS "bench_orders""#,
+        #"DROP TABLE IF EXISTS "bench_products""#,
+        #"DROP TABLE IF EXISTS "bench_categories""#,
+        #"DROP TABLE IF EXISTS "bench_customers""#,
+        #"""
+        CREATE TABLE "bench_customers" (
+            "id" uuid PRIMARY KEY,
+            "name" text NOT NULL,
+            "active" boolean NOT NULL
+        )
+        """#,
+        #"""
+        CREATE TABLE "bench_categories" (
+            "id" uuid PRIMARY KEY,
+            "name" text NOT NULL,
+            "visible" boolean NOT NULL
+        )
+        """#,
+        #"""
+        CREATE TABLE "bench_products" (
+            "id" uuid PRIMARY KEY,
+            "name" text NOT NULL,
+            "category_id" uuid NOT NULL REFERENCES "bench_categories"("id")
+        )
+        """#,
+        #"""
+        CREATE TABLE "bench_orders" (
+            "id" uuid PRIMARY KEY,
+            "customer_id" uuid NOT NULL REFERENCES "bench_customers"("id")
+        )
+        """#,
+        #"""
+        CREATE TABLE "bench_order_items" (
+            "id" uuid PRIMARY KEY,
+            "order_id" uuid NOT NULL REFERENCES "bench_orders"("id"),
+            "product_id" uuid NOT NULL REFERENCES "bench_products"("id"),
+            "quantity" bigint NOT NULL
+        )
+        """#,
+        #"CREATE INDEX ON "bench_orders" ("customer_id")"#,
+        #"CREATE INDEX ON "bench_order_items" ("order_id")"#,
+        #"CREATE INDEX ON "bench_order_items" ("product_id")"#,
+        #"CREATE INDEX ON "bench_products" ("category_id")"#,
     ]
     for sql in schema {
         _ = try await client.query(PostgresQuery(unsafeSQL: sql), logger: nil)
     }
 
     benchClient = client
-    try await roundTripBenchmarks(Repo(client: client))
+    let repo = Repo(client: client)
+    try await roundTripBenchmarks(repo)
+    try await seedJoinComparisonFixture(repo)
+    try await joinComparisonRoundTrip(repo)
 
-    for sql in [#"DROP TABLE "bench_posts""#, #"DROP TABLE "bench_authors""#, #"DROP TYPE "bench_status""#] {
+    for sql in [
+        #"DROP TABLE "bench_order_items""#, #"DROP TABLE "bench_orders""#,
+        #"DROP TABLE "bench_products""#, #"DROP TABLE "bench_categories""#,
+        #"DROP TABLE "bench_customers""#,
+        #"DROP TABLE "bench_posts""#, #"DROP TABLE "bench_authors""#, #"DROP TYPE "bench_status""#,
+    ] {
         _ = try await client.query(PostgresQuery(unsafeSQL: sql), logger: nil)
     }
     group.cancelAll()

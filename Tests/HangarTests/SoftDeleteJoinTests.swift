@@ -158,6 +158,58 @@ struct SoftDeleteJoinRendererTests {
         #expect(!sql.contains(#""deleted_at" IS"#))
     }
 
+    // MARK: Composed (Table.query { })
+
+    @Test("a composed query scopes its base in WHERE and its joins in ON")
+    func composedScope() {
+        let baseScoped = StoredFile.query { q in
+            let file = q.base
+            _ = q.join(Author.self) { $0.id == file.ownerID }
+            return q.query()
+        }
+        #expect(baseScoped.debugSQL.contains(#"WHERE ("t0"."deleted_at" IS NULL)"#))
+
+        let joinScoped = Author.query { q in
+            let owner = q.base
+            _ = q.join(StoredFile.self) { $0.ownerID == owner.id }
+            return q.query()
+        }
+        #expect(
+            joinScoped.debugSQL.contains(
+                #"ON (("t1"."owner_id" = "t0"."id") AND ("t1"."deleted_at" IS NULL))"#))
+        #expect(!joinScoped.debugSQL.contains("WHERE"))
+    }
+
+    @Test("a composed query's scope operators behave like every other form's")
+    func composedScopeOperators() {
+        let only = StoredFile.query { q in
+            let file = q.base
+            _ = q.join(Author.self) { $0.id == file.ownerID }
+            q.onlyDeleted()
+            return q.query()
+        }
+        #expect(only.debugSQL.contains(#"WHERE ("t0"."deleted_at" IS NOT NULL)"#))
+
+        let everything = Author.query { q in
+            let owner = q.base
+            _ = q.leftJoin(StoredFile.self) { $0.ownerID == owner.id }
+            q.withDeleted()
+            return q.query()
+        }
+        #expect(!everything.debugSQL.contains(#""deleted_at" IS"#))
+    }
+
+    @Test("composed count and exists carry the scope")
+    func composedCountCarriesTheScope() {
+        let query = StoredFile.query { q in
+            let file = q.base
+            _ = q.join(Author.self) { $0.id == file.ownerID }
+            return q.query()
+        }
+        #expect(SQLRenderer.count(query).sql.contains(#"WHERE ("t0"."deleted_at" IS NULL)"#))
+        #expect(SQLRenderer.exists(query).sql.contains(#"WHERE ("t0"."deleted_at" IS NULL)"#))
+    }
+
     @Test("a model with no @Deleted column gets no condition anywhere")
     func nonSoftDeletableIsUntouched() {
         let sql = Post.join(Comment.self, on: { post, comment in comment.postID == post.id })
@@ -252,6 +304,38 @@ extension PostgresIntegrationSuite {
                 let owners = try await repo.all(
                     Author.join(StoredFile.self, on: { owner, file in file.ownerID == owner.id }))
                 #expect(owners.allSatisfy { $0.id != lonely.id })
+            }
+        }
+
+        @Test("a composed query honours the scope on both sides")
+        func composedHonoursTheScope() async throws {
+            try await withRepo { repo in
+                let seeded = try await seed(repo)
+
+                let live = try await repo.all(
+                    StoredFile.query { q in
+                        let file = q.base
+                        _ = q.join(Author.self) { $0.id == file.ownerID }
+                        return q.query()
+                    })
+                #expect(live.map(\.id) == [seeded.live.id])
+
+                let trash = try await repo.all(
+                    StoredFile.query { q in
+                        let file = q.base
+                        _ = q.join(Author.self) { $0.id == file.ownerID }
+                        q.onlyDeleted()
+                        return q.query()
+                    })
+                #expect(trash.map(\.id) == [seeded.gone.id])
+
+                let counted = try await repo.count(
+                    Author.query { q in
+                        let owner = q.base
+                        _ = q.join(StoredFile.self) { $0.ownerID == owner.id }
+                        return q.query()
+                    })
+                #expect(counted == 1, "only the live file matches")
             }
         }
     }

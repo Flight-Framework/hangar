@@ -49,6 +49,25 @@ way any other scope change would:
 Post.all.preload(\.files) { $0.withDeleted() }
 ```
 
+## Preloading through a join
+
+Preloads run after the parent rows decode, so they work on any read whose
+result is the base entity — including a join. `Query.join` carries them
+across the conversion, and ``QueryBuilder`` has the same `preload` surface:
+
+```swift
+Post.query { q in
+    let post = q.base
+    _ = q.join(Author.self) { $0.id == post.authorID }
+    q.distinct()
+    q.preload(\.comments)
+    return q.query()
+}
+```
+
+A *projection* drops them, on purpose: `select(into:)` produces rows, not
+models, and there is nothing to hang an association on.
+
 ## Accessing what you loaded
 
 ``Loadable`` is a small enum: loaded, or not.

@@ -60,6 +60,8 @@ just the problem, because someone is usually reading it during an incident.
 - ``Query``
 - ``JoinedQuery``
 - ``JoinedQuery3``
+- ``ComposedQuery``
+- ``QueryBuilder``
 - ``Aliased``
 - ``CommonTableExpression``
 - ``Predicate``
@@ -83,5 +85,6 @@ just the problem, because someone is usually reading it during an incident.
 
 ### Guides
 
+- <doc:ComposedJoins>
 - <doc:Preloading>
 - <doc:TransactionsAndConnections>

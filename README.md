@@ -99,6 +99,41 @@ Post.join(Comment.self, on: { p, c in c.postID == p.id })
     .join(Author.self, on: { _, comment, author in comment.authorID == author.id })
     .select(into: Row.self) { p, c, a in (title: p.title, commenter: a.name) }
 ```
+
+**More than three tables — or self-joins, or too many positional blanks —
+go through `Table.query { }`**, where each join hands back that table's
+columns as an ordinary `let`:
+
+```swift
+let report = try await repo.all(
+    Order.query { q in
+        let order = q.base
+        let customer = q.join(Customer.self) { $0.id == order.customerID }
+        let item = q.join(OrderItem.self) { $0.orderID == order.id }
+        let product = q.join(Product.self) { $0.id == item.productID }
+        q.where(customer.active)
+        return q.select(into: OrderReport.self) {
+            (id: order.id, customer: customer.name, product: product.name)
+        }
+    })
+```
+
+Three things it buys over the fixed-arity forms: **any number of tables**
+(the join list is erased, so the value stays `ComposedQuery<Base, Result>`
+whether it joins two tables or seven); **names instead of positions** —
+`{ _, comment, author in ... }` is already the ergonomic ceiling at three;
+and **self-joins with no `.alias(_:)`**, since every join mints its own
+alias and collision is impossible by construction. Everything else is the
+same: `where`/`order`/`groupBy`/`having`/`limit`/`distinct`, `select` and
+`select(into:)`, `repo.all`/`one`/`count`/`exists`, preloads on the
+base-entity path, and the same soft-delete scope.
+
+`q.query()` and `q.select` snapshot the builder, so a mutation after one of
+them would change nothing — Hangar traps rather than ignoring it.
+`JoinedQuery`/`JoinedQuery3` remain, and their closure form stays the nicer
+spelling for a quick two-table join; the arity is frozen there, and this is
+the answer above it.
+
 **`DISTINCT ON`** for one-row-per-group reads, with the same last-call-wins
 relationship to `.distinct()` that repeated `.limit` calls have:
 

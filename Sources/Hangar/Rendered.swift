@@ -71,6 +71,22 @@ extension JoinedQuery3 {
     }
 }
 
+extension ComposedQuery {
+    /// The SQL with `$n` placeholders — for logging and tests. Unlike
+    /// `JoinedQuery`/`JoinedQuery3`'s `debugSQL`, this never has an
+    /// ambiguous-alias case to catch — every alias `QueryBuilder` mints is
+    /// fresh by construction — so there is nothing to fall back to.
+    public var debugSQL: String {
+        SQLRenderer.select(self).sql
+    }
+
+    /// The rendered statement with its binds applied — what `Repo` sends.
+    public func renderedQuery() throws -> PostgresQuery {
+        if let invalid = selection?.invalid { throw invalid }
+        return try SQLRenderer.select(self).postgresQuery()
+    }
+}
+
 extension Table {
     /// The `INSERT... RETURNING` this model renders to.
     public func debugInsertSQL() throws -> String {

@@ -288,6 +288,45 @@ struct PreloadStep<Model: Table>: Sendable {
     let run: @Sendable (inout [Model], Repo) async throws -> Void
 }
 
+// The two step builders below exist so the association-registry dispatch
+// lives in exactly one place: `Query.preload` and `QueryBuilder.preload`
+// (the composed-join builder) both need it, and a second copy is how the
+// two spellings would drift into answering differently.
+extension PreloadStep {
+    /// A has-many step — direct or through; the call site never needs to
+    /// know which, so the discrimination happens here.
+    static func hasMany<Child: Table>(
+        _ association: WritableKeyPath<Model, Loadable<[Child]>> & Sendable,
+        _ nested: @escaping @Sendable (Query<Child, Child>) -> Query<Child, Child>
+    ) -> PreloadStep<Model> {
+        PreloadStep { parents, repo in
+            let erased = Model._association(for: association)
+            if let loader = erased as? _HasManyLoader<Model, Child> {
+                try await loader.run(&parents, repo, nested)
+            } else if let loader = erased as? _HasManyThroughLoader<Model, Child> {
+                try await loader.run(&parents, repo, nested)
+            } else {
+                throw HangarError.unknownAssociation(
+                    table: Model.schema.name, association: "\(association)")
+            }
+        }
+    }
+
+    /// A to-one step, for whichever loader type the call site expects.
+    static func toOne<Loader>(
+        _ association: AnyKeyPath & Sendable,
+        _ execute: @escaping @Sendable (Loader, inout [Model], Repo) async throws -> Void
+    ) -> PreloadStep<Model> {
+        PreloadStep { parents, repo in
+            guard let loader = Model._association(for: association) as? Loader else {
+                throw HangarError.unknownAssociation(
+                    table: Model.schema.name, association: "\(association)")
+            }
+            try await execute(loader, &parents, repo)
+        }
+    }
+}
+
 extension Query {
     /// Preloads a `@HasMany` association, optionally tuning the child query
     /// (ordering, filtering, its own nested `.preload`s):
@@ -300,21 +339,8 @@ extension Query {
         _ association: WritableKeyPath<Model, Loadable<[Child]>> & Sendable,
         _ nested: @escaping @Sendable (Query<Child, Child>) -> Query<Child, Child> = { $0 }
     ) -> Query<Model, Result> {
-        // Direct and through has-many associations share the call-site
-        // shape, so the caller never needs to know which one this is.
         var next = self
-        next.preloads.append(
-            PreloadStep { parents, repo in
-                let erased = Model._association(for: association)
-                if let loader = erased as? _HasManyLoader<Model, Child> {
-                    try await loader.run(&parents, repo, nested)
-                } else if let loader = erased as? _HasManyThroughLoader<Model, Child> {
-                    try await loader.run(&parents, repo, nested)
-                } else {
-                    throw HangarError.unknownAssociation(
-                        table: Model.schema.name, association: "\(association)")
-                }
-            })
+        next.preloads.append(.hasMany(association, nested))
         return next
     }
 
@@ -343,14 +369,7 @@ extension Query {
         _ execute: @escaping @Sendable (Loader, inout [Model], Repo) async throws -> Void
     ) -> Query<Model, Result> {
         var next = self
-        next.preloads.append(
-            PreloadStep { parents, repo in
-                guard let loader = Model._association(for: association) as? Loader else {
-                    throw HangarError.unknownAssociation(
-                        table: Model.schema.name, association: "\(association)")
-                }
-                try await execute(loader, &parents, repo)
-            })
+        next.preloads.append(.toOne(association, execute))
         return next
     }
 }
