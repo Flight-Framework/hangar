@@ -38,7 +38,7 @@ let package = Package(
         // every fresh CI checkout because this repo has no committed
         // Package.resolved to hold a version back. Bump this deliberately,
         // together with the source changes 0.2.0's new API needs.
-        .package(url: "https://github.com/Swift-Flight/swift-changeset.git", .upToNextMinor(from: "0.1.0")),
+        .package(url: "https://github.com/Flight-Framework/swift-changeset.git", .upToNextMinor(from: "0.1.0")),
         // swift-syntax bumps its major with each Swift release; the open
         // range is the community convention for macro packages.
         .package(url: "https://github.com/swiftlang/swift-syntax.git", "601.0.0"..<"999.0.0"),
