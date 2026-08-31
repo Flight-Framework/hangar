@@ -162,15 +162,13 @@ struct SoftDeleteJoinRendererTests {
 
     @Test("a composed query scopes its base in WHERE and its joins in ON")
     func composedScope() {
-        let baseScoped = StoredFile.query { q in
-            let file = q.base
+        let baseScoped = StoredFile.query { q, file in
             _ = q.join(Author.self) { $0.id == file.ownerID }
             return q.query()
         }
         #expect(baseScoped.debugSQL.contains(#"WHERE ("t0"."deleted_at" IS NULL)"#))
 
-        let joinScoped = Author.query { q in
-            let owner = q.base
+        let joinScoped = Author.query { q, owner in
             _ = q.join(StoredFile.self) { $0.ownerID == owner.id }
             return q.query()
         }
@@ -182,16 +180,14 @@ struct SoftDeleteJoinRendererTests {
 
     @Test("a composed query's scope operators behave like every other form's")
     func composedScopeOperators() {
-        let only = StoredFile.query { q in
-            let file = q.base
+        let only = StoredFile.query { q, file in
             _ = q.join(Author.self) { $0.id == file.ownerID }
             q.onlyDeleted()
             return q.query()
         }
         #expect(only.debugSQL.contains(#"WHERE ("t0"."deleted_at" IS NOT NULL)"#))
 
-        let everything = Author.query { q in
-            let owner = q.base
+        let everything = Author.query { q, owner in
             _ = q.leftJoin(StoredFile.self) { $0.ownerID == owner.id }
             q.withDeleted()
             return q.query()
@@ -201,8 +197,7 @@ struct SoftDeleteJoinRendererTests {
 
     @Test("composed count and exists carry the scope")
     func composedCountCarriesTheScope() {
-        let query = StoredFile.query { q in
-            let file = q.base
+        let query = StoredFile.query { q, file in
             _ = q.join(Author.self) { $0.id == file.ownerID }
             return q.query()
         }
@@ -313,16 +308,14 @@ extension PostgresIntegrationSuite {
                 let seeded = try await seed(repo)
 
                 let live = try await repo.all(
-                    StoredFile.query { q in
-                        let file = q.base
+                    StoredFile.query { q, file in
                         _ = q.join(Author.self) { $0.id == file.ownerID }
                         return q.query()
                     })
                 #expect(live.map(\.id) == [seeded.live.id])
 
                 let trash = try await repo.all(
-                    StoredFile.query { q in
-                        let file = q.base
+                    StoredFile.query { q, file in
                         _ = q.join(Author.self) { $0.id == file.ownerID }
                         q.onlyDeleted()
                         return q.query()
@@ -330,8 +323,7 @@ extension PostgresIntegrationSuite {
                 #expect(trash.map(\.id) == [seeded.gone.id])
 
                 let counted = try await repo.count(
-                    Author.query { q in
-                        let owner = q.base
+                    Author.query { q, owner in
                         _ = q.join(StoredFile.self) { $0.ownerID == owner.id }
                         return q.query()
                     })

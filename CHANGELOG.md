@@ -4,6 +4,50 @@ All notable changes are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-08-31
+
+### Changed
+
+- **`Table.query { }`'s closure now also receives the base entity's own
+  columns as a second parameter**, so the common `let post = q.base` line
+  before the first `q.join` is no longer needed:
+
+  ```swift
+  Order.query { q, order in
+      let customer = q.join(Customer.self) { $0.id == order.customerID }
+      ...
+  }
+  ```
+
+  `q.base` still exists and returns the identical value, for a closure that
+  wants to compute it somewhere other than the parameter list. **Breaking**:
+  every existing single-parameter closure (`{ q in ... }`) needs the second
+  parameter added — the compiler will point at each call site.
+
+### Added
+
+- **`QueryBuilder`'s setter methods are chainable.** `where`, `orWhere`,
+  `order`, `groupBy`, `having`, `limit`, `offset`, `distinct()`,
+  `distinct(on:)`, `lockForUpdate`, `lockForShare`, `withDeleted`,
+  `onlyDeleted`, and all three `preload` overloads now return the builder
+  (`@discardableResult`, so existing statement-style call sites are
+  unaffected):
+
+  ```swift
+  q.where(post.published)
+      .order(post.createdAt.desc())
+      .limit(20)
+  ```
+
+- **`groupBy` takes any number of columns in one call, mixed types
+  included** — `q.groupBy(post.id, post.title, author.name)` groups by a
+  `Column<UUID>` and two `Column<String>`s together, the same
+  parameter-pack technique `select` already uses for heterogeneous column
+  lists. Replaces the old single-column overload rather than adding beside
+  it, so there is no ambiguity between the two; a single column still reads
+  as `q.groupBy(post.id)`. Repeated calls (chained or not) accumulate
+  rather than replace.
+
 ## [0.3.0] - 2026-08-29
 
 ### Fixed

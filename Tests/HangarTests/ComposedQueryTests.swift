@@ -10,8 +10,7 @@ struct ComposedQueryRendererTests {
 
     @Test("four joins render FROM/JOIN in order, every alias fresh and distinct")
     func fourTableShape() {
-        let query = Post.query { q in
-            let post = q.base
+        let query = Post.query { q, post in
             let comment = q.join(Comment.self) { $0.postID == post.id }
             let author = q.join(Author.self) { $0.id == comment.authorID }
             _ = q.join(Profile.self) { $0.authorID == author.id }
@@ -28,8 +27,8 @@ struct ComposedQueryRendererTests {
 
     @Test("where() combines conditions from different joined tables under one AND")
     func crossTableWhere() {
-        let query = Post.query { q in
-            let comment = q.join(Comment.self) { $0.postID == q.base.id }
+        let query = Post.query { q, post in
+            let comment = q.join(Comment.self) { $0.postID == post.id }
             let author = q.join(Author.self) { $0.id == comment.authorID }
             q.where(comment.body != "" && author.name != "banned")
             return q.query()
@@ -43,8 +42,7 @@ struct ComposedQueryRendererTests {
         // Post joined back to itself twice, plus a third distinct table —
         // exactly the case JoinedQuery/JoinedQuery3 need an explicit
         // `.alias("name")` for. Here it just works: t0/t1/t2 never collide.
-        let query = Post.query { q in
-            let post = q.base
+        let query = Post.query { q, post in
             let sibling = q.join(Post.self) { $0.authorID == post.authorID }
             _ = q.join(Author.self) { $0.id == post.authorID }
             q.where(sibling.id != post.id)
@@ -58,8 +56,7 @@ struct ComposedQueryRendererTests {
 
     @Test("leftJoin renders LEFT JOIN, inner joins in the same query stay JOIN")
     func mixedJoinKinds() {
-        let query = Post.query { q in
-            let post = q.base
+        let query = Post.query { q, post in
             _ = q.leftJoin(Comment.self) { $0.postID == post.id }
             _ = q.join(Author.self) { $0.id == post.authorID }
             return q.query()
@@ -77,8 +74,7 @@ struct ComposedQueryRendererTests {
             let author: String
             let bio: String
         }
-        let query = Post.query { q in
-            let post = q.base
+        let query = Post.query { q, post in
             let comment = q.join(Comment.self) { $0.postID == post.id }
             let author = q.join(Author.self) { $0.id == comment.authorID }
             let profile = q.join(Profile.self) { $0.authorID == author.id }
@@ -96,12 +92,97 @@ struct ComposedQueryRendererTests {
     @Test("an unlabeled select(into:) tuple is caught at render time, like the other join forms")
     func invalidProjectionCaught() {
         struct Row: Decodable, Sendable { let title: String; let body: String }
-        let query = Post.query { q in
-            let post = q.base
+        let query = Post.query { q, post in
             let comment = q.join(Comment.self) { $0.postID == post.id }
             return q.select(into: Row.self) { (post.title, comment.body) }
         }
         #expect(throws: HangarError.self) { try query.renderedQuery() }
+    }
+
+    @Test("setter methods chain: each returns the builder, not Void")
+    func settersChain() {
+        let query = Post.query { q, post in
+            let comment = q.join(Comment.self) { $0.postID == post.id }
+            q.where(post.published)
+                .order(post.createdAt.desc())
+                .groupBy(post.id)
+                .having(comment.id.count() > 1)
+                .limit(10)
+                .offset(5)
+            return q.query()
+        }
+        let sql = query.debugSQL
+        #expect(sql.contains(#"WHERE "t0"."published""#))
+        #expect(sql.contains(#"ORDER BY "t0"."created_at" DESC"#))
+        #expect(sql.contains(#"GROUP BY "t0"."id""#))
+        #expect(sql.contains("HAVING"))
+        #expect(sql.hasSuffix("LIMIT 10 OFFSET 5"))
+    }
+
+    @Test("groupBy takes several columns of different types in one call")
+    func groupByMultipleColumns() {
+        let query = Post.query { q, post in
+            let author = q.join(Author.self) { $0.id == post.authorID }
+            // Column<UUID>, Column<String>, Column<String> — mixed types,
+            // one call.
+            q.groupBy(post.id, post.title, author.name)
+            return q.query()
+        }
+        let sql = query.debugSQL
+        #expect(sql.contains(#"GROUP BY "t0"."id", "t0"."title", "t1"."name""#))
+    }
+
+    struct PopularPost: Decodable {
+        let title: String
+        let author: String
+        let commentCount: Int
+    }
+
+    @Test
+    func test() {
+        let query: ComposedQuery<Post, ComposedQueryRendererTests.PopularPost> = Post.query{q, post in
+            let comment = q.join(Comment.self) { $0.postID == post.id }
+            let author = q.join(Author.self) { $0.id == post.authorID }
+
+            return q.where(post.published)
+                .groupBy(post.id, post.title, author.name)
+                .having(comment.id.count() > 10)
+                .select(into: PopularPost.self) {
+                    (
+                        title: post.title,
+                        author: author.name,
+                        commentCount: comment.id.count()
+                    )
+                }
+        }
+    }
+
+    @Test("groupBy calls accumulate rather than replace, single-arg and multi-arg mixed")
+    func groupByAccumulates() {
+        let query = Post.query { q, post in
+            let author = q.join(Author.self) { $0.id == post.authorID }
+            q.groupBy(post.id, post.title)
+                .groupBy(author.name)
+            return q.query()
+        }
+        let sql = query.debugSQL
+        #expect(sql.contains(#"GROUP BY "t0"."id", "t0"."title", "t1"."name""#))
+    }
+
+    @Test("distinct/lock/withDeleted also chain, and a chain call can stand alone unassigned")
+    func remainingSettersChainAndAreDiscardable() {
+        let query = Post.query { q, _ in
+            // Discarding the chain's return is fine — @discardableResult —
+            // exactly like the existing non-chained call sites elsewhere in
+            // this file.
+            q.distinct()
+                .lockForUpdate()
+                .withDeleted()
+            return q.query()
+        }
+        let sql = query.debugSQL
+        #expect(sql.hasPrefix("SELECT DISTINCT "))
+        #expect(sql.hasSuffix("FOR UPDATE"))
     }
 }
 
@@ -129,8 +210,7 @@ extension PostgresIntegrationSuite {
                     let bio: String
                 }
                 let rows = try await repo.all(
-                    Post.query { q in
-                        let post = q.base
+                    Post.query { q, post in
                         let comment = q.join(Comment.self) { $0.postID == post.id }
                         let author = q.join(Author.self) { $0.id == comment.authorID }
                         let profile = q.join(Profile.self) { $0.authorID == author.id }
@@ -158,8 +238,7 @@ extension PostgresIntegrationSuite {
                     Comment(id: UUID(), postID: stored.id, authorID: ada.id, moderatorID: nil, body: "hi"))
 
                 let posts = try await repo.all(
-                    Post.query { q in
-                        let post = q.base
+                    Post.query { q, post in
                         let comment = q.join(Comment.self) { $0.postID == post.id }
                         _ = q.join(Author.self) { $0.id == comment.authorID }
                         return q.query()
@@ -181,8 +260,7 @@ extension PostgresIntegrationSuite {
                 }
                 await #expect(throws: HangarError.self) {
                     _ = try await repo.one(
-                        Post.query { q in
-                            let post = q.base
+                        Post.query { q, post in
                             _ = q.join(Comment.self) { $0.postID == post.id }
                             return q.query()
                         })
@@ -217,8 +295,7 @@ extension PostgresIntegrationSuite {
                     let commentCount: Int
                 }
                 let rows = try await repo.all(
-                    Post.query { q in
-                        let post = q.base
+                    Post.query { q, post in
                         let comment = q.join(Comment.self) { $0.postID == post.id }
                         let author = q.join(Author.self) { $0.id == post.authorID }
                         q.groupBy(author.name)
@@ -242,8 +319,7 @@ struct ComposedQueryCountRendererTests {
 
     @Test("a plain composed count is one statement, no subquery")
     func plainCount() {
-        let query = Post.query { q in
-            let post = q.base
+        let query = Post.query { q, post in
             let comment = q.join(Comment.self) { $0.postID == post.id }
             q.where(comment.body != "")
             return q.query()
@@ -255,8 +331,7 @@ struct ComposedQueryCountRendererTests {
 
     @Test("grouping counts through a subquery — the clause changes what a row is")
     func groupedCount() {
-        let query = Post.query { q in
-            let post = q.base
+        let query = Post.query { q, post in
             _ = q.join(Comment.self) { $0.postID == post.id }
             q.groupBy(post.authorID)
             return q.query()
@@ -270,8 +345,7 @@ struct ComposedQueryCountRendererTests {
 
     @Test("distinct counts through a subquery too, and exists follows the same rules")
     func distinctCountAndExists() {
-        let query = Post.query { q in
-            let post = q.base
+        let query = Post.query { q, post in
             _ = q.join(Comment.self) { $0.postID == post.id }
             q.distinct()
             return q.query()
@@ -279,8 +353,7 @@ struct ComposedQueryCountRendererTests {
         #expect(SQLRenderer.count(query).sql.hasPrefix("SELECT count(*) FROM ("))
         #expect(SQLRenderer.exists(query).sql.hasPrefix("SELECT EXISTS (SELECT DISTINCT"))
 
-        let plain = Post.query { q in
-            let post = q.base
+        let plain = Post.query { q, post in
             _ = q.join(Comment.self) { $0.postID == post.id }
             return q.query()
         }
@@ -289,8 +362,7 @@ struct ComposedQueryCountRendererTests {
 
     @Test("count strips ordering, limit and lock — they cannot change the answer")
     func countStripsClauses() {
-        let query = Post.query { q in
-            let post = q.base
+        let query = Post.query { q, post in
             _ = q.join(Comment.self) { $0.postID == post.id }
             q.order(post.title.asc())
             q.limit(5)
@@ -326,16 +398,14 @@ extension PostgresIntegrationSuite {
                 _ = try await seed(repo)
 
                 let matches = try await repo.count(
-                    Post.query { q in
-                        let post = q.base
+                    Post.query { q, post in
                         _ = q.join(Comment.self) { $0.postID == post.id }
                         return q.query()
                     })
                 #expect(matches == 2, "a one-to-many join counts matches")
 
                 let rows = try await repo.count(
-                    Post.query { q in
-                        let post = q.base
+                    Post.query { q, post in
                         _ = q.join(Comment.self) { $0.postID == post.id }
                         q.distinct()
                         return q.query()
@@ -350,8 +420,7 @@ extension PostgresIntegrationSuite {
                 _ = try await seed(repo)
 
                 let found = try await repo.exists(
-                    Post.query { q in
-                        let post = q.base
+                    Post.query { q, post in
                         let comment = q.join(Comment.self) { $0.postID == post.id }
                         q.where(comment.body == "first")
                         return q.query()
@@ -359,8 +428,7 @@ extension PostgresIntegrationSuite {
                 #expect(found)
 
                 let missing = try await repo.exists(
-                    Post.query { q in
-                        let post = q.base
+                    Post.query { q, post in
                         let comment = q.join(Comment.self) { $0.postID == post.id }
                         q.where(comment.body == "nothing like this")
                         return q.query()
@@ -374,8 +442,7 @@ extension PostgresIntegrationSuite {
             try await withRepo { repo in
                 _ = try await seed(repo)
                 let impossible = try await repo.exists(
-                    Post.query { q in
-                        let post = q.base
+                    Post.query { q, post in
                         let comment = q.join(Comment.self) { $0.postID == post.id }
                         q.groupBy(post.id)
                         q.having(comment.id.count() > 99)
@@ -390,8 +457,7 @@ extension PostgresIntegrationSuite {
             try await withRepo { repo in
                 _ = try await seed(repo)
                 let posts = try await repo.all(
-                    Post.query { q in
-                        let post = q.base
+                    Post.query { q, post in
                         _ = q.join(Author.self) { $0.id == post.authorID }
                         q.distinct()
                         q.preload(\.author)

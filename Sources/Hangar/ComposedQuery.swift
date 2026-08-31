@@ -103,7 +103,7 @@ public struct ComposedQuery<Base: Table, Result: Sendable>: Sendable {
     }
 }
 
-/// The mutable context `Table.query { q in ... }` hands to its closure.
+/// The mutable context `Table.query { q, base in ... }` hands to its closure.
 /// Never escapes the closure and is never touched concurrently, so it
 /// carries no `Sendable` conformance at all — there is nothing to check.
 public final class QueryBuilder<Base: Table> {
@@ -170,88 +170,122 @@ public final class QueryBuilder<Base: Table> {
     /// ANDs a condition onto the query — takes an already-built
     /// `Predicate`, not a closure, because every column it needs is
     /// already a local `let` from an earlier `q.join`/`q.base`.
-    public func `where`(_ condition: some PredicateConvertible) {
+    @discardableResult
+    public func `where`(_ condition: some PredicateConvertible) -> QueryBuilder<Base> {
         checkNotConsumed("where")
         predicate = Self.combine(predicate, condition.predicate, "AND")
+        return self
     }
 
     /// ORs a condition onto everything accumulated so far.
-    public func orWhere(_ condition: some PredicateConvertible) {
+    @discardableResult
+    public func orWhere(_ condition: some PredicateConvertible) -> QueryBuilder<Base> {
         checkNotConsumed("orWhere")
         predicate = Self.combine(predicate, condition.predicate, "OR")
+        return self
     }
 
     /// Appends an ORDER BY term; chained calls order by multiple columns
     /// in call order.
-    public func order(_ term: OrderTerm) {
+    @discardableResult
+    public func order(_ term: OrderTerm) -> QueryBuilder<Base> {
         checkNotConsumed("order")
         orderings.append(term)
+        return self
     }
 
-    /// Appends a GROUP BY column.
-    public func groupBy<V>(_ column: Column<V>) {
+    /// Appends GROUP BY columns — any arity in one call, mixed types
+    /// included (`q.groupBy(post.id, post.title, author.name)` groups by a
+    /// `Column<UUID>` and two `Column<String>`s together). A single column
+    /// still reads as `q.groupBy(post.id)`; this one signature covers both,
+    /// the same way `select`'s pack signature covers every arity without a
+    /// separate one-column overload. A later call (or a later step in one
+    /// chain) appends more columns rather than replacing earlier ones.
+    @discardableResult
+    public func groupBy<each V>(_ columns: repeat Column<each V>) -> QueryBuilder<Base> {
         checkNotConsumed("groupBy")
-        grouping.append(column.expression)
+        for column in repeat each columns {
+            grouping.append(column.expression)
+        }
+        return self
     }
 
     /// ANDs a HAVING condition — the post-grouping filter.
-    public func having(_ condition: some PredicateConvertible) {
+    @discardableResult
+    public func having(_ condition: some PredicateConvertible) -> QueryBuilder<Base> {
         checkNotConsumed("having")
         having = Self.combine(having, condition.predicate, "AND")
+        return self
     }
 
     /// At most `count` rows; a later call replaces an earlier one.
-    public func limit(_ count: Int) {
+    @discardableResult
+    public func limit(_ count: Int) -> QueryBuilder<Base> {
         checkNotConsumed("limit")
         rowLimit = count
+        return self
     }
 
     /// Skips `count` rows; pair with `order` for stable pagination.
-    public func offset(_ count: Int) {
+    @discardableResult
+    public func offset(_ count: Int) -> QueryBuilder<Base> {
         checkNotConsumed("offset")
         rowOffset = count
+        return self
     }
 
     /// `SELECT DISTINCT` — mutually exclusive with `distinct(on:)`,
     /// whichever was called last wins.
-    public func distinct() {
+    @discardableResult
+    public func distinct() -> QueryBuilder<Base> {
         checkNotConsumed("distinct")
         isDistinct = true
         distinctOn = []
+        return self
     }
 
     /// `SELECT DISTINCT ON (column, ...)`.
-    public func distinct<V>(on column: Column<V>) {
+    @discardableResult
+    public func distinct<V>(on column: Column<V>) -> QueryBuilder<Base> {
         checkNotConsumed("distinct(on:)")
         distinctOn.append(column.expression)
         isDistinct = false
+        return self
     }
 
     /// `SELECT ... FOR UPDATE`.
-    public func lockForUpdate() {
+    @discardableResult
+    public func lockForUpdate() -> QueryBuilder<Base> {
         checkNotConsumed("lockForUpdate")
         rowLock = .update
+        return self
     }
 
     /// `SELECT ... FOR SHARE`.
-    public func lockForShare() {
+    @discardableResult
+    public func lockForShare() -> QueryBuilder<Base> {
         checkNotConsumed("lockForShare")
         rowLock = .share
+        return self
     }
 
     /// Include soft-deleted rows — of the base entity and of every joined
     /// table alike, since this says "stop filtering on deletion here".
-    public func withDeleted() {
+    @discardableResult
+    public func withDeleted() -> QueryBuilder<Base> {
         checkNotConsumed("withDeleted")
         deletedRows = .included
+        return self
     }
 
     /// Restrict the *base* entity to its soft-deleted rows. Joined tables
     /// still exclude their own — a trash view of files joins to live
     /// owners, not deleted ones.
-    public func onlyDeleted() {
+    @discardableResult
+    public func onlyDeleted() -> QueryBuilder<Base> {
         checkNotConsumed("onlyDeleted")
         deletedRows = .only
+        return self
     }
 
     // MARK: Preloads
@@ -262,36 +296,42 @@ public final class QueryBuilder<Base: Table> {
     /// Preloads run after the base rows decode, so they apply to
     /// ``query()`` and are dropped by either `select` shape: a projection
     /// has no models to hang associations on.
+    @discardableResult
     public func preload<Child: Table>(
         _ association: WritableKeyPath<Base, Loadable<[Child]>> & Sendable,
         _ nested: @escaping @Sendable (Query<Child, Child>) -> Query<Child, Child> = { $0 }
-    ) {
+    ) -> QueryBuilder<Base> {
         checkNotConsumed("preload")
         preloads.append(.hasMany(association, nested))
+        return self
     }
 
     /// Preloads a `@BelongsTo` association with a non-optional foreign key.
+    @discardableResult
     public func preload<Child: Table>(
         _ association: WritableKeyPath<Base, Loadable<Child>> & Sendable,
         _ nested: @escaping @Sendable (Query<Child, Child>) -> Query<Child, Child> = { $0 }
-    ) {
+    ) -> QueryBuilder<Base> {
         checkNotConsumed("preload")
         preloads.append(
             .toOne(association) { (loader: _ToOneLoader<Base, Child>, parents, repo) in
                 try await loader.run(&parents, repo, nested)
             })
+        return self
     }
 
     /// Preloads a `@HasOne`, or a `@BelongsTo` over a nullable foreign key.
+    @discardableResult
     public func preload<Child: Table>(
         _ association: WritableKeyPath<Base, Loadable<Child?>> & Sendable,
         _ nested: @escaping @Sendable (Query<Child, Child>) -> Query<Child, Child> = { $0 }
-    ) {
+    ) -> QueryBuilder<Base> {
         checkNotConsumed("preload")
         preloads.append(
             .toOne(association) { (loader: _OptionalToOneLoader<Base, Child>, parents, repo) in
                 try await loader.run(&parents, repo, nested)
             })
+        return self
     }
 
     // MARK: Producing the query
@@ -424,8 +464,7 @@ extension Table {
     /// in ... }` shape) or manual `.alias("t3")` bookkeeping.
     ///
     /// ```swift
-    /// let report = Order.query { q in
-    ///     let order = q.base
+    /// let report = Order.query { q, order in
     ///     let customer = q.join(Customer.self) { $0.id == order.customerID }
     ///     let item = q.join(OrderItem.self) { $0.orderID == order.id }
     ///     q.where(customer.active)
@@ -435,6 +474,12 @@ extension Table {
     /// }
     /// ```
     ///
+    /// The closure's second parameter is `Base`'s own columns under this
+    /// query's alias — exactly `q.base`, handed in up front so the common
+    /// case doesn't need a `let order = q.base` line before it can be used.
+    /// `q.base` is still there for a closure that wants to compute it at a
+    /// different point instead; both give the same value.
+    ///
     /// The closure must return a query built from the builder it was
     /// handed. Constraining it — rather than returning whatever the
     /// closure returns — is what keeps the builder itself from escaping
@@ -442,9 +487,10 @@ extension Table {
     /// closure's return type be inferred, so no `q -> ComposedQuery<...>`
     /// annotation is needed at the call site.
     public static func query<R>(
-        _ build: (QueryBuilder<Self>) -> ComposedQuery<Self, R>
+        _ build: (QueryBuilder<Self>, Self.QueryColumns) -> ComposedQuery<Self, R>
     ) -> ComposedQuery<Self, R> {
-        build(QueryBuilder<Self>())
+        let builder = QueryBuilder<Self>()
+        return build(builder, builder.base)
     }
 }
 

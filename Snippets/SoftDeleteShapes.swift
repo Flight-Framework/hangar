@@ -47,8 +47,7 @@ func softDeleteShapes(repo: Repo, cutoff: Date) async throws {
 
     // Composed joins take the same scope operators.
     _ = try await repo.all(
-        SnippetFile.query { q in
-            let file = q.base
+        SnippetFile.query { q, file in
             _ = q.join(SnippetOwner.self) { $0.id == file.ownerID }
             q.withDeleted()
             return q.query()

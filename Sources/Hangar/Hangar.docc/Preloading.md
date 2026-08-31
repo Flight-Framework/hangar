@@ -56,8 +56,7 @@ result is the base entity — including a join. `Query.join` carries them
 across the conversion, and ``QueryBuilder`` has the same `preload` surface:
 
 ```swift
-Post.query { q in
-    let post = q.base
+Post.query { q, post in
     _ = q.join(Author.self) { $0.id == post.authorID }
     q.distinct()
     q.preload(\.comments)

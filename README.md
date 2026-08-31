@@ -106,8 +106,7 @@ columns as an ordinary `let`:
 
 ```swift
 let report = try await repo.all(
-    Order.query { q in
-        let order = q.base
+    Order.query { q, order in
         let customer = q.join(Customer.self) { $0.id == order.customerID }
         let item = q.join(OrderItem.self) { $0.orderID == order.id }
         let product = q.join(Product.self) { $0.id == item.productID }

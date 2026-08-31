@@ -320,8 +320,7 @@ func joinComparisonClientSide() {
     }
 
     measureWithResources("ComposedQuery: order ⋈ customer ⋈ item", iterations: 100_000) {
-        let query = BenchOrder.query { q in
-            let order = q.base
+        let query = BenchOrder.query { q, order in
             _ = q.join(BenchCustomer.self) { $0.id == order.customerID }
             _ = q.join(BenchOrderItem.self) { $0.orderID == order.id }
             return q.query()
@@ -342,8 +341,7 @@ func joinComparisonClientSide() {
     }
 
     measureWithResources("ComposedQuery: same join, select(into:)", iterations: 100_000) {
-        let query = BenchOrder.query { q in
-            let order = q.base
+        let query = BenchOrder.query { q, order in
             let customer = q.join(BenchCustomer.self) { $0.id == order.customerID }
             let item = q.join(BenchOrderItem.self) { $0.orderID == order.id }
             return q.select(into: BenchOrderItemRow.self) {
@@ -358,8 +356,7 @@ func joinComparisonClientSide() {
     print("  This is new capability, not a speed delta. Timed on its own for reference:")
 
     measureWithResources("ComposedQuery: order ⋈ customer ⋈ item ⋈ product ⋈ category", iterations: 100_000) {
-        let query = BenchOrder.query { q in
-            let order = q.base
+        let query = BenchOrder.query { q, order in
             let customer = q.join(BenchCustomer.self) { $0.id == order.customerID }
             let item = q.join(BenchOrderItem.self) { $0.orderID == order.id }
             let product = q.join(BenchProduct.self) { $0.id == item.productID }
@@ -404,8 +401,7 @@ func joinComparisonRoundTrip(_ repo: Repo) async throws {
     try await measureAsyncWithResources("ComposedQuery: order ⋈ customer ⋈ item, real rows", iterations: 300) {
         blackHole(
             try await repo.all(
-                BenchOrder.query { q in
-                    let order = q.base
+                BenchOrder.query { q, order in
                     let customer = q.join(BenchCustomer.self) { $0.id == order.customerID }
                     let item = q.join(BenchOrderItem.self) { $0.orderID == order.id }
                     q.where(order.customerID == customerID)
@@ -417,8 +413,7 @@ func joinComparisonRoundTrip(_ repo: Repo) async throws {
 
     section("The 5-table query, executed for real — proof it isn't just a rendering trick")
     let reports = try await repo.all(
-        BenchOrder.query { q in
-            let order = q.base
+        BenchOrder.query { q, order in
             let customer = q.join(BenchCustomer.self) { $0.id == order.customerID }
             let item = q.join(BenchOrderItem.self) { $0.orderID == order.id }
             let product = q.join(BenchProduct.self) { $0.id == item.productID }
@@ -443,8 +438,7 @@ func joinComparisonRoundTrip(_ repo: Repo) async throws {
     ) {
         blackHole(
             try await repo.all(
-                BenchOrder.query { q in
-                    let order = q.base
+                BenchOrder.query { q, order in
                     let customer = q.join(BenchCustomer.self) { $0.id == order.customerID }
                     let item = q.join(BenchOrderItem.self) { $0.orderID == order.id }
                     let product = q.join(BenchProduct.self) { $0.id == item.productID }
