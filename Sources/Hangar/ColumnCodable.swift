@@ -70,9 +70,25 @@ where
 /// the flight-data-postgres spike proved out (SPIKE-FINDINGS S1): a
 /// parameter *declared* TEXT is rejected for an enum-typed column, while an
 /// `unknown` one type-checks against anything with a text input function.
-public protocol PostgresEnum: RawRepresentable, ColumnCodable where RawValue == String {}
+public protocol PostgresEnum: RawRepresentable, ColumnCodable, DynamicFilterConvertible
+where RawValue == String {}
 
 extension PostgresEnum {
+    /// A `.string` filter value matched against the case labels; anything
+    /// else, or a label that names no case, is a type mismatch rather than a
+    /// coercion.
+    ///
+    /// Without this, `AnyColumn(\.status)` did not compile for an
+    /// enum-valued column — so `?status=booked`, the most ordinary runtime
+    /// filter an API has, could not be put on a `DynamicallyFilterable`
+    /// allowlist at all. Every conformer already carries what the lookup
+    /// needs, and the allowlist, not the column's type, is the boundary that
+    /// keeps a filter safe.
+    public static func fromDynamicFilter(_ value: DynamicFilterValue) -> Self? {
+        guard case .string(let raw) = value else { return nil }
+        return Self(rawValue: raw)
+    }
+
     /// `unknown` (OID 705): the server infers the enum type from context.
     public static var psqlType: PostgresDataType { .unknownOID }
     /// Enum labels travel as text.

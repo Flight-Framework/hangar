@@ -474,6 +474,20 @@ public struct Repo: Sendable {
         }
         let returned: [M] = try await rows(for: SQLRenderer.update(validated, into: M.self), intent: .write, operation: "update")
         guard let stored = returned.first else {
+            // An optimistically-locked write that matched nothing is a lost
+            // update far more often than a deleted row, and the two are not
+            // distinguishable without a second query — so the error names
+            // the guard that failed instead of asserting the row is gone.
+            // `staleModel`'s message ("no longer exists — it was deleted
+            // concurrently or never inserted") sent applications to 404 for
+            // what is a 409, and `ValidatedChanges.lock` was sitting right
+            // here saying which column guarded the statement.
+            if let lock = validated.lock {
+                throw ChangesetConflictError(
+                    table: validated.tableName,
+                    field: lock.field,
+                    expected: String(describing: lock.expected))
+            }
             throw HangarError.staleModel(table: M.schema.name)
         }
         return stored
