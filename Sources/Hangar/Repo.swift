@@ -131,7 +131,7 @@ public struct Repo: Sendable {
     /// At most one row, or `nil`. More than one match is an error, not a
     /// silent first-row pick. Preloads apply to the returned model.
     public func one<M: Table>(_ query: Query<M, M>) async throws -> M? {
-        var models: [M] = try await rows(for: SQLRenderer.select(query.limit(2)), intent: query.rowLock == nil ? .read : .write, operation: "select")
+        var models: [M] = try await rows(for: SQLRenderer.select(probing(query)), intent: query.rowLock == nil ? .read : .write, operation: "select")
         guard models.count <= 1 else {
             throw HangarError.tooManyRows(table: M.schema.name)
         }
@@ -143,11 +143,25 @@ public struct Repo: Sendable {
 
     /// At most one projected row; more than one throws `tooManyRows`.
     public func one<M, R>(_ query: Query<M, R>) async throws -> R? {
-        let results: [R] = try await all(query.limit(2))
+        let results: [R] = try await all(probing(query))
         guard results.count <= 1 else {
             throw HangarError.tooManyRows(table: M.schema.name)
         }
         return results.first
+    }
+
+    /// The query `one` actually runs.
+    ///
+    /// `one` needs a second row to be able to say "more than one matched",
+    /// so it asks for two — but only when the caller has not already said
+    /// how many they want. Imposing `LIMIT 2` over an explicit `.limit(1)`
+    /// and then raising ``HangarError/tooManyRows(table:)`` about the extra
+    /// row contradicts the caller and makes "the head of an ordered list"
+    /// — a waitlist, a queue, a leaderboard — inexpressible through `one`
+    /// as soon as the list has two entries. A caller's own limit is
+    /// honored; `tooManyRows` then means what it says.
+    private func probing<M, R>(_ query: Query<M, R>) -> Query<M, R> {
+        query.rowLimit == nil ? query.limit(2) : query
     }
 
     // MARK: Streaming
