@@ -84,7 +84,7 @@ extension Repo {
             try await body()
         }
         for entry in counter.summary where entry.count >= threshold {
-            logger?.warning(
+            diagnosticsLogger.warning(
                 "hangar repeated query",
                 metadata: [
                     "sql": .string(entry.sql),
@@ -96,10 +96,25 @@ extension Repo {
         return result
     }
 
+    /// Where a diagnostic goes when the repo was built without a logger.
+    ///
+    /// A `Repo` carries an optional logger, and both reports above used to be
+    /// `logger?.warning(...)` — so a repo constructed without one discarded
+    /// them. That is every repo `flight-data`'s `withRepo` builds, which is
+    /// the idiom its own documentation recommends: an application could set
+    /// `diagnostics = .recommended`, run thirty copies of one statement
+    /// inside `detectingRepeatedQueries`, and get silence.
+    ///
+    /// Diagnostics are opt-in and exist to be read. Statement *tracing* still
+    /// respects the optional logger — a repo with none stays quiet at debug
+    /// level — but a threshold the caller deliberately set reports through a
+    /// package logger rather than into nothing.
+    var diagnosticsLogger: Logger { logger ?? Logger(label: "hangar.diagnostics") }
+
     /// Called from the execute funnel once a statement's duration is known.
     func reportDiagnostics(sql: String, operation: String, duration: Duration) {
         if let threshold = diagnostics.slowQueryThreshold, duration >= threshold {
-            logger?.warning(
+            diagnosticsLogger.warning(
                 "hangar slow query",
                 metadata: [
                     "sql": .string(sql),

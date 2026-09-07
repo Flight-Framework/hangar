@@ -176,6 +176,15 @@ public struct Repo: Sendable {
     // batch, which is exactly what streaming refuses to hold), and the
     // sequence must be consumed inside the call — the connection is leased
     // for the duration.
+    //
+    // That lease is worth one more sentence, because it is easy to hand its
+    // length to someone else. If the closure waits on anything outside the
+    // database — writing an HTTP response, most obviously — the connection
+    // is held for as long as *that* takes, and the pace is then the
+    // consumer's rather than yours: a client reading a CSV export at 20 KB/s
+    // holds a connection for the whole download, and enough of them hold the
+    // pool. Page the query and release between batches, or give exports
+    // their own small pool, when the reader is not one you control.
 
     /// Streams full models, decoding one row at a time. Preloads on the
     /// query are **not** applied — batching needs every parent at once; use
@@ -474,6 +483,20 @@ public struct Repo: Sendable {
         }
         let returned: [M] = try await rows(for: SQLRenderer.update(validated, into: M.self), intent: .write, operation: "update")
         guard let stored = returned.first else {
+            // An optimistically-locked write that matched nothing is a lost
+            // update far more often than a deleted row, and the two are not
+            // distinguishable without a second query — so the error names
+            // the guard that failed instead of asserting the row is gone.
+            // `staleModel`'s message ("no longer exists — it was deleted
+            // concurrently or never inserted") sent applications to 404 for
+            // what is a 409, and `ValidatedChanges.lock` was sitting right
+            // here saying which column guarded the statement.
+            if let lock = validated.lock {
+                throw ChangesetConflictError(
+                    table: validated.tableName,
+                    field: lock.field,
+                    expected: String(describing: lock.expected))
+            }
             throw HangarError.staleModel(table: M.schema.name)
         }
         return stored
@@ -502,12 +525,17 @@ public struct Repo: Sendable {
     ) async throws -> PostgresRowSequence {
         let start = ContinuousClock.now
         let sequence: PostgresRowSequence
-        switch backend {
-        case .client(let primary, let replica):
-            let client = intent == .read ? (replica ?? primary) : primary
-            sequence = try await client.query(query, logger: logger)
-        case .transaction(let connection, _):
-            sequence = try await connection.query(query, logger: logger ?? Self.quietLogger)
+        do {
+            switch backend {
+            case .client(let primary, let replica):
+                let client = intent == .read ? (replica ?? primary) : primary
+                sequence = try await client.query(query, logger: logger)
+            case .transaction(let connection, _):
+                sequence = try await connection.query(query, logger: logger ?? Self.quietLogger)
+            }
+        } catch {
+            reportFailure(error, sql: query.sql, operation: operation)
+            throw error
         }
         let duration = ContinuousClock.now - start
         // Constructed per statement rather than cached per operation on
@@ -533,6 +561,33 @@ public struct Repo: Sendable {
                 "duration_ms": .stringConvertible(Double(nanoseconds(of: duration)) / 1e6),
             ])
         return sequence
+    }
+
+    /// Says why a statement failed, once, where the statement is known.
+    ///
+    /// PostgresNIO redacts `PSQLError.description` on purpose — it can carry
+    /// bound parameters — so an error that reaches an application's own log
+    /// arrives as "Generic description to prevent accidental leakage of
+    /// sensitive data. For debugging details, use `String(reflecting:
+    /// error)`", and a 500 caused by a missing table, a constraint, or a
+    /// serialization failure was indistinguishable from any other 500. The
+    /// server's own diagnostic fields carry no binds, and a SQLSTATE is the
+    /// difference between "retry this" and "page someone".
+    ///
+    /// Through the diagnostics logger, so it is not lost on a repo built
+    /// without one — which is every repo `withRepo` constructs.
+    private func reportFailure(_ error: any Error, sql: String, operation: String) {
+        guard let psql = error as? PSQLError, let server = psql.serverInfo else { return }
+        var metadata: Logger.Metadata = [
+            "sql": .string(sql),
+            "operation": .string(operation),
+        ]
+        if let state = server[.sqlState] { metadata["sqlstate"] = .string(state) }
+        if let message = server[.message] { metadata["message"] = .string(message) }
+        if let detail = server[.detail] { metadata["detail"] = .string(detail) }
+        if let hint = server[.hint] { metadata["hint"] = .string(hint) }
+        if let constraint = server[.constraintName] { metadata["constraint"] = .string(constraint) }
+        diagnosticsLogger.error("hangar statement failed", metadata: metadata)
     }
 
     private func nanoseconds(of duration: Duration) -> Int64 {

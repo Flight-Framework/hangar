@@ -4,6 +4,63 @@ All notable changes are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-09-07
+
+Found by building an application on the whole Flight stack and driving it from
+outside: five of these are things a unit test cannot see, because they are
+about which version resolved, what an error said, or whether a diagnostic
+reached anyone.
+
+### Breaking
+
+- **`swift-changeset` is now required at `0.2.0`.** It was
+  `.upToNextMinor(from: "0.1.0")`, which caps the whole stack: `flight-data`
+  asks for `from: "0.1.0"`, the intersection is 0.1.x, and SwiftPM resolves it
+  silently. Everything 0.2.0 added — `optimisticLock(_:)`, nested changesets,
+  `ValidatedChanges.lock` and `.tableName`, `ChangesetConflictError` — was
+  therefore unreachable from any application built on this stack, while
+  swift-changeset's own README documented all of it. The cap was stale rather
+  than load-bearing: the library compiled against 0.2.0 untouched and two test
+  call sites needed the new `ValidatedChanges(tableName:…)` initializer.
+
+- **`PostgresEnum` now implies `DynamicFilterConvertible`.** An enum-valued
+  column could not go on a `DynamicallyFilterable` allowlist, so `?status=booked`
+  — the most ordinary runtime filter an API has — did not compile. Everything
+  the lookup needs is already required by `PostgresEnum`. Conformers that are
+  not `Equatable` (nothing an enum with a raw value can be) would need to
+  become so.
+
+### Fixed
+
+- **An optimistic-lock conflict said the row no longer exists.** A changeset
+  carrying `optimisticLock(\.version)` renders `… WHERE id = 1 AND version = 7`;
+  the writer that loses that race matches no row, and `update` reported
+  `HangarError.staleModel` — "it was deleted concurrently or never inserted".
+  An application maps that to 404 when the honest answer is 409 and "reload
+  and retry". `ValidatedChanges.lock` says which column guarded the statement,
+  and swift-changeset ships `ChangesetConflictError` for exactly this; both
+  are now used.
+
+- **Query diagnostics reported into nothing on the idiom that builds most
+  repos.** `slowQueryThreshold` and `repeatedQueryThreshold` are opt-in and
+  both reported through `logger?.warning(…)` — and `flight-data`'s `withRepo`,
+  the bracket its own documentation recommends, constructs `Repo(connection:)`
+  with no logger. Thirty copies of one statement inside
+  `detectingRepeatedQueries` produced silence. A threshold the caller set
+  deliberately now reports through a package logger; statement *tracing* still
+  respects the optional logger.
+
+- **A failed statement now says why.** PostgresNIO redacts its own
+  `description`, so an error reaching an application's log carried no SQLSTATE,
+  no message, no constraint name. The execute funnel reports the server's
+  diagnostic fields — which carry no bound values — when a statement fails.
+
+### Documentation
+
+- `stream`'s lease: if its closure waits on something outside the database —
+  an HTTP response, most obviously — the connection is held for as long as
+  that takes, and a slow client sets the length.
+
 ## [0.4.0] - 2026-08-31
 
 ### Changed

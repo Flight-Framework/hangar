@@ -61,7 +61,7 @@ struct ChangesetRendererTests {
     func valueMismatch() {
         // Hand-built ValidatedChanges (the public init exists for driver
         // tests) boxing an Int where the column is text.
-        let validated = ValidatedChanges(changedFields: ["title": 42], identity: nil)
+        let validated = ValidatedChanges(tableName: Post.tableName, changedFields: ["title": 42], identity: nil)
         #expect(throws: HangarError.self) {
             _ = try SQLRenderer.insert(validated, into: Post.self)
         }
@@ -69,7 +69,7 @@ struct ChangesetRendererTests {
 
     @Test("a field name outside the schema is refused")
     func strayField() {
-        let validated = ValidatedChanges(changedFields: ["bogus": "x"], identity: nil)
+        let validated = ValidatedChanges(tableName: Post.tableName, changedFields: ["bogus": "x"], identity: nil)
         #expect(throws: HangarError.self) {
             _ = try SQLRenderer.insert(validated, into: Post.self)
         }
